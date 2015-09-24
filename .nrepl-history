@@ -1,0 +1,6 @@
+(.getClass "")
+(.getClass [])
+exit
+(doc def)
+(require '[uplift.core :as uc])
+exit
