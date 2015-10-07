@@ -1,0 +1,3 @@
+{:url-format #immuconf/override ""
+ :user-config #immuconf/default "/user.edn"
+ :base-url #immuconf/default ""}

@@ -4,7 +4,7 @@
             [clj-ssh.ssh :as sshs]
             [clj-ssh.cli :as sshc]
             [clojure.java.io :as cjio]
-            [clojure.tools.nrepl.server :refer [start-server stop-server]]
+    ;[clojure.tools.nrepl.server :refer [start-server stop-server]]
             clojure.string)
   (:import [java.nio.file Paths]
            [java.lang.management ManagementFactory]))

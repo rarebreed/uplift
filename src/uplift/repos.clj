@@ -4,7 +4,8 @@
 (ns uplift.repos
   (:require [clojure.string :as str]
             [clojure.java.io :as cjio]
-            [uplift.core :as uc])
+            [uplift.core :as uc]
+            [immuconf.config :as cfg])
   (:import [java.nio.file Files]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
@@ -12,6 +13,12 @@
 (def latest-rhel7-server-debuginfo "[latest-rhel7-server-debuginfo]")
 (def repodata {:debug "debug/tree"
                :prod "os"})
+
+(def user-config (let [home (System/getProperty "user.home")
+                       usr-cfg (get (cfg/load "resources/dev.edn") :user-config)]
+                   (str home usr-cfg)))
+(def config (cfg/load "resources/properties.edn" user-config))
+(def url-format (get config :url-format))
 
 
 (defprotocol ToConfig
@@ -62,30 +69,27 @@
   )
 
 
-(defn build-url
-  "Formats the compose string
-   :type one of :released :rel-eng or :nightly
-   :extra a suffix to be added RHEL version (eg '20150720.0' or '7.2-Beta-1.0')
-   :flavor can be something like 'Server' or 'Workstation'
-   :arch the arch to target (eg :x86_64, :aarch64, :ppc64, :ppc64le, :s390x)
-   "
-  [& {:keys [rtype version flavor arch debug]
-      :as opts
-      :or {rtype :rel-eng
-           version "7.2"
-           flavor "Server"
-           arch "x86_64"
-           debug false}}]
+(defn build-url-rhel
+  "Creates a url based on the url-format string"
+  [url-fmt & {:keys [rtype version flavor arch debug]
+               :as opts
+               :or {rtype "rel-eng"
+                    version "7.2"
+                    flavor "Server"
+                    arch "x86_64"
+                    debug false}}]
   (println "in build-url")
   (doseq [[k v] opts]
     (println k "=" v))
   (let [repod (if debug "debug/tree" "os")]
-    (format (rtype base-urls) version flavor arch repod)))
+    (format url-fmt version flavor arch repod)))
 
 (defn make-base-server
-  [rtype version repo & {:keys [flavor arch enabled gpgcheck description debug]
+  [rtype version repo & {:keys [url url-fmt flavor arch enabled gpgcheck description debug]
                          :as opts
-                         :or {flavor "Server"
+                         :or {url nil
+                              url-fmt url-format
+                              flavor "Server"
                               arch "x86_64"
                               enabled "1"
                               gpgcheck "0"
@@ -93,7 +97,9 @@
   (println "in make-base-server")
   (doseq [[k v] opts]
     (println k "=" v))
-  (let [url (build-url :rtype rtype :version version :flavor flavor :arch arch :debug debug)]
+  (let [url (if url
+              url
+              (build-url-rhel url-fmt :rtype rtype :version version :flavor flavor :arch arch :debug debug))]
     (println url)
     (-> {:reponame repo
          :name (if description
