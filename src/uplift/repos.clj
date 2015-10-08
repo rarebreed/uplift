@@ -73,7 +73,7 @@
   "Creates a url based on the url-format string"
   [url-fmt & {:keys [rtype version flavor arch debug]
                :as opts
-               :or {rtype "rel-eng"
+               :or {rtype :rel-eng
                     version "7.2"
                     flavor "Server"
                     arch "x86_64"
@@ -81,8 +81,9 @@
   (println "in build-url")
   (doseq [[k v] opts]
     (println k "=" v))
-  (let [repod (if debug "debug/tree" "os")]
-    (format url-fmt version flavor arch repod)))
+  (let [type (name rtype)
+        repod (if debug "debug/tree" "os")]
+    (format url-fmt type version flavor arch repod)))
 
 (defn make-base-server
   [rtype version repo & {:keys [url url-fmt flavor arch enabled gpgcheck description debug]
@@ -135,4 +136,31 @@
     (write-to-config latest fpath)
     (write-to-config latest-optional fpath)
     (write-to-config latest-debuginfo fpath)))
-    
+
+(defn get-page [url]
+  (slurp url))
+
+(defn make-dotted-version-regex
+  [version]
+  (re-pattern (clojure.string/replace version #"\." "\\\\.")))
+
+(defn scrape
+  "Some sites dont have a REST API so here's a dumb regex to look for some version
+   from the page retrieved from a mirror site
+
+   Usage:
+     (scrape (slurp \"http://some.site.com\") #\"RHEL-7.1\""
+  [page-source pattern]
+  ;; Just a dumb regex that scans an html page
+  (let [matched (filter #(not (nil? %))
+                        (for [line (clojure.string/split page-source #"\n")]
+                          (re-find pattern line)))]
+    ;; we only want the second in each
+    (map #(second %) matched)))
+
+(defn find-all
+  ""
+  [url version]
+  (let [patt (make-dotted-version-regex version)
+        page (get-page url)]
+    (scrape page patt)))
