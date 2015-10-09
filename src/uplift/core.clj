@@ -7,7 +7,7 @@
             [uplift.utils.algos :refer [lmap]]
     ;[clojure.tools.nrepl.server :refer [start-server stop-server]]
             clojure.string)
-  (:import [java.nio.file Paths]
+  (:import [java.nio.file Paths Path Files]
            [java.lang.management ManagementFactory]))
 
 ;; -----------------------------------------------------------------
@@ -77,10 +77,11 @@
   "Uses a ProcessBuilder to execute a command locally"
   [cmd & opts]
   (let [cmd-s (clojure.string/split cmd #" ")
-        run (partial exec/sh cmd-s)]
-    (if opts
-      (run (first opts))
-      (run))))
+        run (partial exec/sh cmd-s)
+        result @(if opts
+                  (run (first opts))
+                  (run))]
+    (assoc result :cmd (->> cmd-s (interpose " ") (apply str)))))
 
 
 (defprotocol Executor
@@ -174,6 +175,12 @@
   (.getArch osb))
 
 
+(defn ssh-copy-id
+  [host & {:keys [user keypath]
+           :or {user "root" keypath "/root/.ssh/id_auto_dsa.pub"}}]
+  @(run (format "ssh-copy-id -i %s %s@%s" keypath user host)))
+
+
 ;; We will install the openjdk packages including jre and jdk on remote system
 (defn install-jdk
   "Will install the Java openjdk on the remote system"
@@ -183,7 +190,6 @@
                                        "java-1.%d.0-openjdk"])
         install (map #(ssh host (str "yum install -y " %)) jdks)]
     install))
-
 
 
 (defn remote-download
@@ -217,8 +223,8 @@
   ([head & tail]
    `(lazy-seq
       (cons
-       (wrap ~head)
-       (try+ ~@tail)))))
+        (wrap ~head)
+        (try+ ~@tail)))))
 
 
 (defn install-lein
@@ -250,3 +256,25 @@
   [m entry]
   (let [[k v] entry]
     (assoc m k v)))
+
+
+(defn varargs [f string+ & strings]
+  (f string+ (into-array String (if strings strings []))))
+
+
+(defn file-seq
+  "Returns a sequence of DirectoryStream entries"
+  [path]
+  (let [p (varargs #(Paths/get %1 %2) path)
+        ds (Files/newDirectoryStream p)]
+    (for [d ds]
+      d)))
+
+(defn list-files
+  "Returns a listing of files in a directory"
+  [entries & filters]
+  (let [filtered (concat
+                   (for [f filters]
+                     (set (filter f entries))))]
+    (for [d filtered]
+      (.toString (.getFileName d)))))
