@@ -14,3 +14,8 @@
       (if (and continue (not-empty t))
         (cons result (lmap f checkfn t))
         nil))))
+
+
+(defn items
+  [m]
+  (flatten (for [[k v] m] [k v])))

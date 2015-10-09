@@ -262,7 +262,7 @@
   (f string+ (into-array String (if strings strings []))))
 
 
-(defn file-seq
+(defn directory-seq
   "Returns a sequence of DirectoryStream entries"
   [path]
   (let [p (varargs #(Paths/get %1 %2) path)

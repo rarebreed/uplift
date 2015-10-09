@@ -30,6 +30,12 @@
   )
 
 
+(defn copy-products
+  "Copies the generated certs from candlepin to the host"
+  [candle]
+
+  )
+
 (defn copy-ca-cert
   "Copies the /etc/candlepin/certs/candlepin-ca.crt to test machine"
   [candle]
