@@ -142,7 +142,11 @@
 
 (defn make-dotted-version-regex
   [version]
-  (re-pattern (clojure.string/replace version #"\." "\\\\.")))
+  (let [base (clojure.string/replace version #"\." "\\\\.")
+        left ">([a-zA-Z0-9._-]*"
+        right "[a-zA-Z0-9._/-]*)<"
+        final (str left base right)]
+    (re-pattern final)))
 
 (defn scrape
   "Some sites dont have a REST API so here's a dumb regex to look for some version
@@ -152,9 +156,7 @@
      (scrape (slurp \"http://some.site.com\") #\"RHEL-7.1\""
   [page-source pattern]
   ;; Just a dumb regex that scans an html page
-  (let [matched (filter #(not (nil? %))
-                        (for [line (clojure.string/split page-source #"\n")]
-                          (re-find pattern line)))]
+  (let [matched (re-seq pattern page-source)]
     ;; we only want the second in each
     (map #(second %) matched)))
 
@@ -164,3 +166,8 @@
   (let [patt (make-dotted-version-regex version)
         page (get-page url)]
     (scrape page patt)))
+
+(defn make-links [url version]
+  (let [sep (if (not= (last url) \/) "/" "")]
+    (for [version (find-all url version)]
+      (str url sep version))))
