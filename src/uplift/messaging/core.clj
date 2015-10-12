@@ -57,6 +57,32 @@
       (recur (.hasRemaining buff)))))
 
 
+(defn read-chan
+  "Reading from a channel is consistent across channel and buffer types"
+  [chan buf]
+  (.read chan buf))
+
+
+(defprotocol UBuffer
+  "Encapsulates how to read and write from a buffer"
+  (read-channel [this channel])
+  (write-channel [this channel]))
+
+
+(defrecord UByteBuffer [size]
+  UBuffer
+    (read-channel [this chan]
+      (let [data ])
+      (loop [bytes-read (read-chan chan this)]
+        (cond
+          (> bytes-read 0)
+            (do
+              (.flip this)
+              )
+          (= -1 bytes-read) )))
+  )
+
+
 (defn make-buffer []
   (CharBuffer/wrap "Client is connected"))
 
@@ -83,9 +109,7 @@
         client-sock-chan (.accept server-sock-chan)]
     ;; Check if the .accept returns nil, since the ServerSocketChannel was marked non-blocking
     (when (not (nil? client-sock-chan))
-      (register-client-chan client-sock-chan selector))
-    )
-  )
+      (register-client-chan client-sock-chan selector))))
 
 
 (defn iterate-keys
@@ -111,9 +135,7 @@
              nil
              )
            (recur (get-next) (conj acc sc)))
-         acc)
-
-       )))
+         acc))))
 
 
 (defn serve
@@ -126,8 +148,7 @@
       (if (and continue? (not= selection 0))
         (recur true)
         (do
-          (iterate-keys selector))
-        ))))
+          (iterate-keys selector))))))
 
 
 (defn client
@@ -148,5 +169,4 @@
         {:keys [chan select-key selector]} server-sock-chan
         client (client host port)]
     ;; Start the ServerSocketChannel to listen for incoming data/connections
-    (serve selector)
-    ))
+    (serve selector)))
