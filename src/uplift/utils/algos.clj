@@ -19,3 +19,9 @@
 (defn items
   [m]
   (flatten (for [[k v] m] [k v])))
+
+
+;; Useful for java interop where a java function is a vararg function
+(defn varargs [f arg & args]
+  (let [t (class arg)]
+    (f arg (into-array t (if args args [])))))
