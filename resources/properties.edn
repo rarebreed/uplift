@@ -1,3 +1,4 @@
 {:url-format #immuconf/override ""
  :user-config #immuconf/default "/user.edn"
- :base-url #immuconf/default ""}
+ :base-url #immuconf/default ""
+ :uplift-dir "/root/Projects/uplift"}

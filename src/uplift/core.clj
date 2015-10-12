@@ -334,3 +334,14 @@
   This should be called after the repo files have been installed."
   []
   )
+
+
+(defn file-exists?
+  [^String fpath & host]
+  (if host
+    (let [cmd (format "ls -al %s" fpath)
+          result (ssh (first host) cmd)]
+      (if (= 0 (:exit result))
+        true
+        false))
+    (.exists (java.io.File. fpath))))

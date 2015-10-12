@@ -2,11 +2,10 @@
 ;; repo files
 
 (ns uplift.repos
-  (:require [clojure.string :as str]
-            [clojure.java.io :as cjio]
+  (:require [clojure.java.io :as cjio]
             [uplift.core :as uc]
-            [immuconf.config :as cfg])
-  (:import [java.nio.file Files]))
+            [immuconf.config :as cfg]
+            [uplift.config.reader :as ucr]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
@@ -14,6 +13,7 @@
 (def repodata {:debug "debug/tree"
                :prod "os"})
 
+(def c (ucr/get-configuration))
 (def user-config (let [home (System/getProperty "user.home")
                        usr-cfg (get (cfg/load "resources/dev.edn") :user-config)]
                    (str home usr-cfg)))

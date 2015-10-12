@@ -16,4 +16,4 @@
                  [org.seleniumhq.selenium/selenium-server "2.47.1"]
                  [org.clojure/core.match "0.3.0-alpha4"]]
 
-  :main uplift.core)
+  :main uplift.repos)

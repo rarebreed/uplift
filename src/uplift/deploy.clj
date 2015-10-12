@@ -26,8 +26,24 @@
 
 (ns uplift.deploy
   (:require [clj-webdriver.taxi :as cwt]
-            [uplift.core :as core])
+            [uplift.core :as core]
+            [uplift.core :as uc]
+            [uplift.config.reader :as ucr])
   )
+
+(def config (ucr/get-configuration))
+
+(defn install-uplift
+  [host]
+  (let [uplift-dir (:uplift-dir config)
+        uplift? (uc/file-exists? uplift-dir)]
+    (if uplift?
+      (core/ssh host (format "cd %s; git pull" uplift-dir))
+      (do
+        (core/git-clone host "https://github.com/RedHatQE/uplift.git")
+        (core/ssh host "mkdir Projects")
+        (core/ssh host "mv uplift Projects/")
+        (core/ssh host "cd /root/Projects/uplift; lein deps")))))
 
 
 (defn copy-products
