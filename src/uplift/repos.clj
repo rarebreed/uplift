@@ -135,7 +135,8 @@
         latest-debuginfo (make-base-server :rel-eng version latest-rhel7-server-debuginfo :enabled 0 :debug true)]
     (write-to-config latest fpath)
     (write-to-config latest-optional fpath)
-    (write-to-config latest-debuginfo fpath)))
+    (write-to-config latest-debuginfo fpath))
+    (println (slurp fpath)))
 
 (defn get-page [url]
   (slurp url))
@@ -171,3 +172,11 @@
   (let [sep (if (not= (last url) \/) "/" "")]
     (for [version (find-all url version)]
       (str url sep version))))
+
+
+(defn install-repos
+  [host version]
+  ;; TODO: check if rhel-latest.repo already exists on remote host
+  ;; If not, create one locally, then scp it to remote
+  (let [_ (make-default-repo-file version :fpath "/tmp/rhel-latest.repo" :clear true)]
+    (uc/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d")))
