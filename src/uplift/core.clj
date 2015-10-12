@@ -4,7 +4,7 @@
             [clj-ssh.ssh :as sshs]
             [clj-ssh.cli :as sshc]
             [clojure.java.io :as cjio]
-            [uplift.utils.algos :refer [lmap]]
+            [uplift.utils.algos :refer [lmap items varargs]]
     ;[clojure.tools.nrepl.server :refer [start-server stop-server]]
             clojure.string)
   (:import [java.nio.file Paths Path Files]
@@ -51,10 +51,13 @@
 
 ;; NOTE: Use this function if you're working at the REPL
 (defn ssh [host cmd & {:keys [username loglvl]
+                       :as opts
                        :or {username "root" loglvl :info}}]
   (do
     (timbre/logf loglvl "On %s| Executing command: %s" host cmd)
-    (sshc/ssh host cmd :username username)))
+    (let [opts (merge opts {:username username})
+          args (->> (dissoc opts :loglvl) (items) (concat [host cmd]))]
+      (apply sshc/ssh args))))
 
 
 ;; NOTE:  This function will not work from the REPL.  If you use this, use it from within
@@ -108,13 +111,43 @@
     obj))
 
 
+(defn directory-seq
+  "Returns a sequence of DirectoryStream entries"
+  [path]
+  (let [p (varargs #(Paths/get %1 %2) path)
+        ds (Files/newDirectoryStream p)]
+    (for [d ds]
+      d)))
+
+
+(defn list-files
+  "Returns a listing of files in a directory"
+  [entries & filters]
+  (let [filters (if (nil? filters)
+                  [(fn [_] true)]
+                  filters)
+        ;; apply the the filter functions to the entries and make them a set
+        filtered (reduce clojure.set/union #{}
+                   (for [f filters]
+                     (set (filter f entries))))]
+    (for [d filtered]
+      (let [name (.toString (.getFileName d))
+            _ (timbre/logf :info name)]
+        name))))
+
+
+(defn path-name
+  [path]
+  (.toString (.getFileName path)))
+
+
 (defn get-remote-file
   "Gets a remote file"
   [host src & {:keys [user dest]
                 :or {user "root" dest "."}}]
   (let [temp "scp %s@%s:%s %s"
         cmd (format temp user host src dest)]
-    @(run cmd)))
+    (run cmd)))
 
 
 (defn send-file-to
@@ -122,7 +155,7 @@
                :or {user "root" dest ""}}]
   (let [temp "scp %s %s@%s:%s"
         cmd (format temp src user host dest)]
-    @(run cmd)))
+    (run cmd)))
 
 
 ;; Ughhh, Java doesn't have a good way to get distro information.  So
@@ -156,16 +189,35 @@
     (reduce finalfn {} filtered)))
 
 
-  ;; TODO:  Test this
-  (defn git-clone-pull
-    [repo]
-    (let [f (-> (Paths/get repo (into-array String [])) .toFile)
-          localfn #(for [cmd ["git clean -dxf" "git pull"]]
-                    (run cmd {:dir %}))
-          remotefn #(run (str "git clone " %))]
-      (if (.isDirectory f)
-        (localfn repo)
-        (remotefn repo))))
+(defn repo-exists?
+  [repo & {:keys [host]}]
+  (let [exists? (if host
+                  (ssh host "yum repolist enabled")
+                  ())])
+  )
+
+;; Add a pre hook to verify that repo file has been installed
+(defn install-devtools
+  [host]
+  (ssh host "yum groupinstall -y \"Development Tools\""))
+
+
+(defn git-clone
+  "Clones a git repo onto host"
+  [host url]
+  (ssh host (format "git clone %s" url)))
+
+
+;; TODO:  Test this
+(defn git-clone-pull
+  [repo]
+  (let [f (-> (Paths/get repo (into-array String [])) .toFile)
+        localfn #(for [cmd ["git clean -dxf" "git pull"]]
+                  (run cmd {:dir %}))
+        remotefn #(run (str "git clone " %))]
+    (if (.isDirectory f)
+      (localfn repo)
+      (remotefn repo))))
 
 
 (defn get-arch
@@ -231,11 +283,28 @@
   "Installs leiningen on the remote host and puts it in /usr/local/bin"
   [host dest]
   (let [lein-url "https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein"
+        edit (fn []
+               (let [bashrc (get-remote-file host "~/.bashrc")
+                     contents (when (= 0 (:exit bashrc))
+                                (slurp ".bashrc"))
+                     edited (if contents
+                              (str contents "\nexport LEIN_ROOT=1\n")
+                              (throw (RuntimeException. "could not get .bashrc file")))
+                     _ (spit "/tmp/.bashrc" edited)]
+                 (send-file-to host "/tmp/.bashrc" :dest "~/.bashrc")))
         results (try+
                   (remote-download host lein-url dest)
                   (ssh host (format "chmod ug+x %s" dest))
-                  (ssh host "lein"))]
-    (some #(instance? Exception %) results)))
+                  (edit)
+                  (ssh host "'lein'"))]
+    {:results results :exceptions? (some #(instance? Exception %) results)}))
+
+
+(defn lein-self-update
+  "Calls lein upgrade"
+  []
+  @(run "lein upgrade")
+  )
 
 
 (defn set-grub-cmdline
@@ -258,23 +327,10 @@
     (assoc m k v)))
 
 
-(defn varargs [f string+ & strings]
-  (f string+ (into-array String (if strings strings []))))
 
+(defn install-redhat-ddns
+  "Installs the redhat-ddns-client
 
-(defn directory-seq
-  "Returns a sequence of DirectoryStream entries"
-  [path]
-  (let [p (varargs #(Paths/get %1 %2) path)
-        ds (Files/newDirectoryStream p)]
-    (for [d ds]
-      d)))
-
-(defn list-files
-  "Returns a listing of files in a directory"
-  [entries & filters]
-  (let [filtered (concat
-                   (for [f filters]
-                     (set (filter f entries))))]
-    (for [d filtered]
-      (.toString (.getFileName d)))))
+  This should be called after the repo files have been installed."
+  []
+  )
