@@ -9,15 +9,15 @@
 ;; DeploymentServer tasks
 ;; 1. Provision a new VM
 ;; 2. Provide IP address of the new VM
-;; 3. Install a JVM on the VM
+;; 3. Install a JVM and leiningen on the VM  --
 ;; 4. Install uplift to the VM
 ;;
 ;; Uplift agent tasks
 ;; 1. Create a local repo file for the remote machine
 ;; 2. Get distro information
-;; 3. Install needed dependencies
+;; 3. Install the ddnsclient for remote
 ;; 4. Setup system time
-;; 5. Install the ddnsclient for remote
+;; 5. Install needed dependencies
 ;; 6. Setup hostname and ddns name
 ;; 7. Poll until hostname resolves
 ;; 8. Copy the id_auto keys from central to machine
