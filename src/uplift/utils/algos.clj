@@ -25,3 +25,14 @@
 (defn varargs [f arg & args]
   (let [t (class arg)]
     (f arg (into-array t (if args args [])))))
+
+
+(defn bool
+  [i]
+  (if (= i 0)
+    true
+    false))
+
+
+(defn all? [coll]
+  (every? #(when % %) coll))

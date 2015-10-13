@@ -1,20 +1,19 @@
 (ns uplift.core
   (:require [taoensso.timbre :as timbre]
-            [clj-commons-exec :as exec]
-            [clj-ssh.ssh :as sshs]
-            [clj-ssh.cli :as sshc]
-            [clojure.java.io :as cjio]
+            [uplift.command :as cmdr :refer [run ssh execute which]]
+            [uplift.utils.file-sys :as file-sys]
             [uplift.utils.algos :refer [lmap items varargs]]
-    ;[clojure.tools.nrepl.server :refer [start-server stop-server]]
+            [uplift.config.reader :as ucr]
             clojure.string)
-  (:import [java.nio.file Paths Path Files]
+  (:import [java.nio.file Paths]
+           [java.io File]
            [java.lang.management ManagementFactory]))
 
 ;; -----------------------------------------------------------------
 (def osb (ManagementFactory/getOperatingSystemMXBean))
 (def ddnsname (atom ""))
 (def ddnshash (atom ""))
-(sshc/default-session-options {:strict-host-key-checking :no})
+(def config (ucr/get-configuration))
 
 (defrecord Distro
   [name
@@ -38,124 +37,29 @@
   (reset! ddnshash hash))
 
 
-(defn bool
-  [i]
-  (if (= i 0)
-    true
-    false))
+(defn copy-ssh-key
+  "Copies the ssh public key to remote host.  Uses sshpass to get around prompting for password
 
-
-(defn all? [coll]
-  (every? #(when % %) coll))
-
-
-;; NOTE: Use this function if you're working at the REPL
-(defn ssh [host cmd & {:keys [username loglvl]
-                       :as opts
-                       :or {username "root" loglvl :info}}]
-  (do
-    (timbre/logf loglvl "On %s| Executing command: %s" host cmd)
-    (let [opts (merge opts {:username username})
-          args (->> (dissoc opts :loglvl) (items) (concat [host cmd]))]
-      (apply sshc/ssh args))))
-
-
-;; NOTE:  This function will not work from the REPL.  If you use this, use it from within
-;; another clojure program (is there a way to tell you are executing from the repl?)
-(defn ssh-p
-  "Executes a command on a remote host.
-   
-  - host: hostname or IP address to execute cmd on
-  - cmd: the command to execute"
-  [^String host ^String cmd & {:keys [username loglvl pvtkey-path]
-                               :or {username "root" loglvl :info pvtkey-path "~/.ssh/id_auto_dsa"}}]
-  (timbre/logf loglvl "On %s| Executing command: %s" host cmd)
-  (let [agent (sshs/ssh-agent {:use-system-ssh-agent true})
-        session (sshs/session agent host {:strict-host-key-checking :no})]
-      (sshs/with-connection session
-        (sshs/ssh session {:in cmd}))))
-
-
-(defn run
-  "Uses a ProcessBuilder to execute a command locally"
-  [cmd & opts]
-  (let [cmd-s (clojure.string/split cmd #" ")
-        run (partial exec/sh cmd-s)
-        result @(if opts
-                  (run (first opts))
-                  (run))]
-    (assoc result :cmd (->> cmd-s (interpose " ") (apply str)))))
-
-
-(defprotocol Executor
-  "Any object that supports execution of a system command should implement this"
-  (call [this] [this block?] [this block? throw?]))
-
-;; Wraps the notion of a command
-(defrecord Command [cmd host callfn env stdout? stderr? combine? extras])
-
-(defn make-command
-  [cmd {:keys [host stdout stderr combine env extras log]
-        :as opts
-        :or {host nil
-             stdout true
-             stderr false
-             combine true
-             env nil
-             extras nil
-             log false}}]
-  (let [func (if host
-               ssh
-               run)
-        obj (map->Command (assoc opts :callfn func))]
-    obj))
-
-
-(defn directory-seq
-  "Returns a sequence of DirectoryStream entries"
-  [path]
-  (let [p (varargs #(Paths/get %1 %2) path)
-        ds (Files/newDirectoryStream p)]
-    (for [d ds]
-      d)))
-
-
-(defn list-files
-  "Returns a listing of files in a directory"
-  [entries & filters]
-  (let [filters (if (nil? filters)
-                  [(fn [_] true)]
-                  filters)
-        ;; apply the the filter functions to the entries and make them a set
-        filtered (reduce clojure.set/union #{}
-                   (for [f filters]
-                     (set (filter f entries))))]
-    (for [d filtered]
-      (let [name (.toString (.getFileName d))
-            _ (timbre/logf :info name)]
-        name))))
-
-
-(defn path-name
-  [path]
-  (.toString (.getFileName path)))
-
-
-(defn get-remote-file
-  "Gets a remote file"
-  [host src & {:keys [user dest]
-                :or {user "root" dest "."}}]
-  (let [temp "scp %s@%s:%s %s"
-        cmd (format temp user host src dest)]
-    (run cmd)))
-
-
-(defn send-file-to
-  [host src & {:keys [user dest]
-               :or {user "root" dest ""}}]
-  (let [temp "scp %s %s@%s:%s"
-        cmd (format temp src user host dest)]
-    (run cmd)))
+  Args
+  - host: hostname or IP address
+  - pass-file: path to the password file
+  - username: user to authorize as (default is root)
+  - key-path: the public key to use (default what is in ~/.ssh/id_dsa.pub)
+  "
+  [^String host ^String pass-file & {:keys [username key-path]
+                                     :or {username "root"
+                                          key-path ""}}]
+  {:pre [(file-sys/file-exists? pass-file)]}
+  (let [deps (which "sshpass")
+        sshpass-fmt "sshpass -f %s ssh-copy-id -i %s -o StrictHostKeyChecking=no %s@%s"
+        base (format sshpass-fmt pass-file key-path username host)
+        call (delay (run base))]
+    (if (nil? deps)
+      (let [sshpass (run "yum install -y sshpass")]
+        (if (not= 0 (:exit sshpass))
+          (throw (Exception. "Unable to install sshpass to copy ssh public key"))
+          (force call)))
+      (force call))))
 
 
 ;; Ughhh, Java doesn't have a good way to get distro information.  So
@@ -189,12 +93,12 @@
     (reduce finalfn {} filtered)))
 
 
-(defn repo-exists?
-  [repo & {:keys [host]}]
-  (let [exists? (if host
+(defn enabled-repos
+  [& {:keys [host]}]
+  (let [enabled (if host
                   (ssh host "yum repolist enabled")
-                  ())])
-  )
+                  (run "yum repolist enabled"))]
+    enabled))
 
 ;; Add a pre hook to verify that repo file has been installed
 (defn install-devtools
@@ -204,8 +108,11 @@
 
 (defn git-clone
   "Clones a git repo onto host"
-  [host url]
-  (ssh host (format "git clone %s" url)))
+  [host url & {:keys [dir]}]
+  (let [udir (when-not dir
+               (-> (ucr/get-configuration) :uplift-dir (File.) (.getParent)))
+        dir (if dir dir udir)]
+    (ssh host (format "cd %s; git clone %s" dir url))))
 
 
 ;; TODO:  Test this
@@ -225,12 +132,6 @@
    amd64 (which is the real name, not x86_64) for 64bit on x86"
   []
   (.getArch osb))
-
-
-(defn ssh-copy-id
-  [host & {:keys [user keypath]
-           :or {user "root" keypath "/root/.ssh/id_auto_dsa.pub"}}]
-  @(run (format "ssh-copy-id -i %s %s@%s" keypath user host)))
 
 
 ;; We will install the openjdk packages including jre and jdk on remote system
@@ -279,19 +180,31 @@
         (try+ ~@tail)))))
 
 
+(defn check-java
+  "Returns"
+  [& {:keys [host]}]
+  (let [version (if host
+                  (ssh host "java -version")
+                  (run "java -version"))
+        outp (:err version)]
+    (if (not= 0 (:exit version))
+      ["No java installed" "0" "0"]
+      (first (re-seq #"\d\.(\d)\.\d_(\d{2})" outp)))))
+
+
 (defn install-lein
   "Installs leiningen on the remote host and puts it in /usr/local/bin"
   [host dest]
   (let [lein-url "https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein"
         edit (fn []
-               (let [bashrc (get-remote-file host "~/.bashrc")
+               (let [bashrc (file-sys/get-remote-file host "~/.bashrc")
                      contents (when (= 0 (:exit bashrc))
                                 (slurp ".bashrc"))
                      edited (if contents
                               (str contents "\nexport LEIN_ROOT=1\n")
                               (throw (RuntimeException. "could not get .bashrc file")))
                      _ (spit "/tmp/.bashrc" edited)]
-                 (send-file-to host "/tmp/.bashrc" :dest "~/.bashrc")))
+                 (file-sys/send-file-to host "/tmp/.bashrc" :dest "~/.bashrc")))
         results (try+
                   (remote-download host lein-url dest)
                   (ssh host (format "chmod ug+x %s" dest))
@@ -303,8 +216,7 @@
 (defn lein-self-update
   "Calls lein upgrade"
   []
-  @(run "lein upgrade")
-  )
+  @(run "lein upgrade"))
 
 
 (defn set-grub-cmdline
@@ -333,15 +245,5 @@
 
   This should be called after the repo files have been installed."
   []
+
   )
-
-
-(defn file-exists?
-  [^String fpath & host]
-  (if host
-    (let [cmd (format "ls -al %s" fpath)
-          result (ssh (first host) cmd)]
-      (if (= 0 (:exit result))
-        true
-        false))
-    (.exists (java.io.File. fpath))))

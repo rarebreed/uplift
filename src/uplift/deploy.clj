@@ -26,24 +26,29 @@
 
 (ns uplift.deploy
   (:require [clj-webdriver.taxi :as cwt]
+            [taoensso.timbre :as timbre]
             [uplift.core :as core]
             [uplift.core :as uc]
-            [uplift.config.reader :as ucr])
+            [uplift.command :refer [run ssh]]
+            [uplift.utils.file-sys :as file-sys]
+            [uplift.config.reader :as ucr]
+            [uplift.repos :as ur])
   )
 
 (def config (ucr/get-configuration))
+(def uplift-git "https://github.com/RedHatQE/uplift.git")
 
 (defn install-uplift
   [host]
   (let [uplift-dir (:uplift-dir config)
-        uplift? (uc/file-exists? uplift-dir)]
+        uplift? (file-sys/file-exists? uplift-dir)]
     (if uplift?
-      (core/ssh host (format "cd %s; git pull" uplift-dir))
+      (ssh host (format "cd %s; git pull" uplift-dir))
       (do
         (core/git-clone host "https://github.com/RedHatQE/uplift.git")
-        (core/ssh host "mkdir Projects")
-        (core/ssh host "mv uplift Projects/")
-        (core/ssh host "cd /root/Projects/uplift; lein deps")))))
+        (ssh host "mkdir Projects")
+        (ssh host "mv uplift Projects/")
+        (ssh host "cd /root/Projects/uplift; lein deps")))))
 
 
 (defn copy-products
@@ -57,14 +62,32 @@
   [candle]
   (let [src "/etc/candlepin/certs/candlein-ca.crt"
         dest "/etc/rhsm/ca/candlepin-ca.pem"]
-    (core/get-remote-file candle src :dest dest)))
+    (file-sys/get-remote-file candle src :dest dest)))
 
 
-(defn install-deps
-  []
-  (let [distro-info (core/distro-info)   ;; Figure out what version we are on
-        repo-file ()]                    ;; Install repo file if it's not there
+(defn bootstrap
+  "Sets up a new VM with the minimum to kick everything else off
 
-    )
+  1. Install repo file
+  2. Install JVM
+  3. Install leiningen"
+  [host version]
+  (ur/install-repos host version)
+  ;; copy the public key
 
-  )
+  (let [[_ major minor] (uc/check-java :host host)
+        _ (cond
+            (= major "0") (uc/install-jdk host 8)
+            (= major "7") nil
+            :else
+            (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))
+        uplift-dir (:uplift-dir (ucr/get-configuration))]
+    ;; Install leiningen and verify
+    (uc/install-lein host "/usr/local/bin/lein")
+    (when-not (-> (ssh host "lein version") :exit (= 0))
+      (throw (RuntimeException. "Unable to install leiningen")))
+    ;; Install uplift
+    (uc/install-devtools host)
+    (uc/git-clone host uplift-git)
+    ;; TODO: change that to lein run when it's ready
+    (ssh host (format "cd %s; lein deps"))))

@@ -4,6 +4,7 @@
 (ns uplift.repos
   (:require [clojure.java.io :as cjio]
             [uplift.core :as uc]
+            [uplift.utils.file-sys :as file-sys]
             [immuconf.config :as cfg]
             [uplift.config.reader :as ucr]))
 
@@ -59,14 +60,6 @@
         (.write newfile line))
       (.newLine newfile)))
     )
-    
-
-
-;; Scrape results of the baseurl link
-(defn list-dirs
-  "Retrieves a list of all elements"
-  [base-url]
-  )
 
 
 (defn build-url-rhel
@@ -130,13 +123,15 @@
   [version & {:keys [fpath clear]
               :or {fpath "/etc/yum.repos.d/rhel-latest.repo"
                    clear false}}]
-  (let [latest (latest-rel-eng-server version)
-        latest-optional (make-base-server :rel-eng version latest-rhel7-server-optional :flavor "Server-optional")
-        latest-debuginfo (make-base-server :rel-eng version latest-rhel7-server-debuginfo :enabled 0 :debug true)]
-    (write-to-config latest fpath)
-    (write-to-config latest-optional fpath)
-    (write-to-config latest-debuginfo fpath))
-    (println (slurp fpath)))
+  (if (file-sys/repo-file-exists? :repo-file fpath)
+    "rhel-latest.repo already exists"
+    (let [latest (latest-rel-eng-server version)
+          latest-optional (make-base-server :rel-eng version latest-rhel7-server-optional :flavor "Server-optional")
+          latest-debuginfo (make-base-server :rel-eng version latest-rhel7-server-debuginfo :enabled 0 :debug true)]
+      (write-to-config latest fpath)
+      (write-to-config latest-optional fpath)
+      (write-to-config latest-debuginfo fpath)))
+  (println (slurp fpath)))
 
 (defn get-page [url]
   (slurp url))
@@ -178,5 +173,7 @@
   [host version]
   ;; TODO: check if rhel-latest.repo already exists on remote host
   ;; If not, create one locally, then scp it to remote
-  (let [_ (make-default-repo-file version :fpath "/tmp/rhel-latest.repo" :clear true)]
-    (uc/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d")))
+  (if (file-sys/repo-file-exists? :host host)
+    "rhel-latest.repo already exists"
+    (let [_ (make-default-repo-file version :fpath "/tmp/rhel-latest.repo" :clear true)]
+      (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d"))))

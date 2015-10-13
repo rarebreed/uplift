@@ -1,1 +1,2 @@
-{:user-config #immuconf/default "/user.edn"}
+{:user-config #immuconf/default "/user.edn"
+ :sshpass-file "/password.txt"}
