@@ -13,6 +13,7 @@
                  [levand/immuconf "0.1.0"]
                  [clj-webdriver "0.7.2"]
                  [org.seleniumhq.selenium/selenium-server "2.47.1"]
-                 [org.clojure/core.match "0.3.0-alpha4"]]
+                 [org.clojure/core.match "0.3.0-alpha4"]
+                 [prismatic/schema "1.0.1"]]
 
   :main uplift.deploy)

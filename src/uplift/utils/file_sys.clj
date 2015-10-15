@@ -33,10 +33,10 @@
 
 
 (defn file-exists?
-  [^String fpath & host]
+  [^String fpath & {:keys [host]}]
   (if host
     (let [cmd (format "ls -al %s" fpath)
-          result (uc/ssh (first host) cmd)]
+          result (uc/ssh  host cmd)]
       (if (= 0 (:exit result)) true false))
     (.exists (File. fpath))))
 
@@ -44,7 +44,7 @@
 (defn repo-file-exists?
   [& {:keys [host repo-file]
       :or {repo-file "rhel-latest.repo"}}]
-  (let [repo-path (str "/etc/yum.repos.d" repo-file)]
+  (let [repo-path (str "/etc/yum.repos.d/" repo-file)]
     (file-exists? repo-path :host host)))
 
 
