@@ -9,11 +9,12 @@
 ;; DeploymentServer tasks
 ;; 1. Provision a new VM
 ;; 2. Provide IP address of the new VM
-;; 3. Install a JVM and leiningen on the VM  --
-;; 4. Install uplift to the VM
+;; 3. Install a JVM and leiningen on the VM
+;; 4. Create a local repo file for the remote machine
+;; 5. Install uplift to the VM
 ;;
 ;; Uplift agent tasks
-;; 1. Create a local repo file for the remote machine
+;; 1.
 ;; 2. Get distro information
 ;; 3. Install the ddnsclient for remote
 ;; 4. Setup system time
@@ -29,7 +30,7 @@
             [taoensso.timbre :as timbre]
             [uplift.core :as core]
             [uplift.core :as uc]
-            [uplift.command :refer [run ssh]]
+            [uplift.command :refer [run ssh which]]
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.repos :as ur])
@@ -39,16 +40,22 @@
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
 
 (defn install-uplift
+  "Install uplift including any dependencies"
   [host]
-  (let [uplift-dir (:uplift-dir config)
+  (let [uplift-dir (get-in config [:config :uplift-dir])
         uplift? (file-sys/file-exists? uplift-dir)]
     (if uplift?
       (ssh host (format "cd %s; git pull" uplift-dir))
       (do
-        (core/git-clone host "https://github.com/RedHatQE/uplift.git")
-        (ssh host "mkdir Projects")
-        (ssh host "mv uplift Projects/")
-        (ssh host "cd /root/Projects/uplift; lein deps")))))
+        (when-not (which "git" :host host)
+          (uc/install-devtools host))
+        (core/git-clone host uplift-git)
+        (let [parent-dir (.getParent (java.io.File. uplift-dir))]
+          (when-not (file-sys/file-exists? parent-dir)
+            (ssh host (format "mkdir -p %s" parent-dir))
+            (ssh host (format "mv uplift %s" parents))))
+        ;; TODO: Change this to lein run when server is ready
+        (ssh host (format "cd %s; lein deps" uplift-dir))))))
 
 
 (defn copy-products
@@ -56,6 +63,7 @@
   [candle]
 
   )
+
 
 (defn copy-ca-cert
   "Copies the /etc/candlepin/certs/candlepin-ca.crt to test machine"
@@ -72,22 +80,18 @@
   2. Install JVM
   3. Install leiningen"
   [host version]
+  (let [ssh-result (uc/copy-ssh-key host)]
+    ssh-result)
   (ur/install-repos host version)
-  ;; copy the public key
-
   (let [[_ major minor] (uc/check-java :host host)
         _ (cond
             (= major "0") (uc/install-jdk host 8)
             (= major "7") nil
             :else
-            (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))
-        uplift-dir (:uplift-dir (ucr/get-configuration))]
+            (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))]
     ;; Install leiningen and verify
     (uc/install-lein host "/usr/local/bin/lein")
     (when-not (-> (ssh host "lein version") :exit (= 0))
       (throw (RuntimeException. "Unable to install leiningen")))
     ;; Install uplift
-    (uc/install-devtools host)
-    (uc/git-clone host uplift-git)
-    ;; TODO: change that to lein run when it's ready
-    (ssh host (format "cd %s; lein deps"))))
+    (install-uplift host)))

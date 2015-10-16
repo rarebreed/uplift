@@ -78,34 +78,42 @@
 
 (defprotocol Executor
   "Any object that supports execution of a system command should implement this"
-  (call [this] [this block?] [this block? throw?]))
+  (call [this]))
 
-;; Wraps the notion of a command
-(s/defrecord Command
-  [cmd  :- s/Str          ;; command string to execute
-   host :- s/Str          ;; hostname or IP
-   env                    ;; Map of env vars
-   in   :- InputStream    ;; InputStream to stdin
-   out  :- OutputStream   ;; OutputStream of stdout
-   err  :- OutputStream   ;; OutputStream of stderr
-   closed                 ;; Map of file streams to close
-   shutdown? :- Boolean   ;; Close process on VM exit
-   result-handler-fn      ;; fn that decides success
-   ])
+;; Wraps the notion of a command.  All fields are optional except cmd
+(s/defrecord Command [cmd :- s/Str           ;; command string to execute
+                      host :- s/Str          ;; hostname or IP
+                      log :- s/Str           ;; Path to a log file
+                      env                    ;; Map of env vars
+                      in :- InputStream      ;; InputStream to stdin
+                      out :- OutputStream    ;; OutputStream of stdout
+                      err :- OutputStream    ;; OutputStream of stderr
+                      closed                 ;; Map of file streams to close
+                      shutdown? :- Boolean   ;; Close process on VM exit
+                      result-handler-fn]     ;; fn that decides success
+  Executor
+  (call
+    [this]
+    (let [opts (dissoc this :cmd :host)]
+      (run (:cmd this) opts))))
+
 
 (defn make-command
-  [cmd {:keys [host stdout stderr combine env extras log]
-        :as opts
-        :or {host nil
-             stdout true
-             stderr false
-             combine true
-             env nil
-             extras nil
-             log false}}]
-  (let [func (if host
-               ssh
-               run)
-        obj (map->Command (assoc opts :callfn func))]
-    obj))
+  "constructor for a Command object"
+  [cmd & {:keys [host env log in out err closed log shutdown? result-handler-fn]
+          :as opts
+          :or {host nil
+               env nil
+               log ""
+               in nil
+               out nil
+               err false
+               closed []
+               shutdown? false
+               result-handler-fn nil}}]
+  (map->Command (assoc opts :cmd cmd)))
 
+;; make sure we add ssh-add
+(defn ssh-add
+  []
+  (run "ssh-add"))

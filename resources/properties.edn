@@ -1,4 +1,6 @@
-{:url-format #immuconf/override ""
- :user-config #immuconf/default "/user.edn"
- :base-url #immuconf/default ""
- :uplift-dir "/root/Projects/uplift"}
+{:url-format #immuconf/override ""                          ;; a format str for the URL to create a repo
+ :user-config #immuconf/default "/user.edn"                 ;; path to user config (will prepend with $HOME
+ :base-url #immuconf/default ""                             ;;
+ :uplift-dir "/root/Projects/uplift"                        ;; Where to install uplift code on VM
+ :ssh-password #immuconf/override ""                        ;; root password for VM
+ :ddns-client  #immuconf/default ""}                        ;; (optional) url for ddns client rpm

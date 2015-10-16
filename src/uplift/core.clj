@@ -37,6 +37,10 @@
   (reset! ddnshash hash))
 
 
+(defn set-env
+  [])
+
+
 (defn copy-ssh-key
   "Copies the ssh public key to remote host.  Uses sshpass to get around prompting for password
 
@@ -46,14 +50,14 @@
   - username: user to authorize as (default is root)
   - key-path: the public key to use (default what is in ~/.ssh/id_dsa.pub)
   "
-  [^String host ^String pass-file & {:keys [username key-path]
-                                     :or {username "root"
-                                          key-path ""}}]
-  {:pre [(file-sys/file-exists? pass-file)]}
+  [^String host & {:keys [username key-path]
+                   :or {username "root"
+                        key-path ""}}]
   (let [deps (which "sshpass")
-        sshpass-fmt "sshpass -f %s ssh-copy-id -i %s -o StrictHostKeyChecking=no %s@%s"
-        base (format sshpass-fmt pass-file key-path username host)
-        call (delay (run base))]
+        sshpass-fmt "sshpass -e ssh-copy-id -i %s -o StrictHostKeyChecking=no %s@%s"
+        base (format sshpass-fmt key-path username host)
+        env {:env {"SSHPASS" (:ssh-password config)}}
+        call (delay (run base env))]
     (if (nil? deps)
       (let [sshpass (run "yum install -y sshpass")]
         (if (not= 0 (:exit sshpass))
@@ -192,9 +196,16 @@
       (first (re-seq #"\d\.(\d)\.\d_(\d{2})" outp)))))
 
 
+(defn- check-results
+  [results]
+  (and (reduce #(= 0 (:exit %)) (:results results))
+       (not (:exceptions? results))))
+
+
 (defn install-lein
   "Installs leiningen on the remote host and puts it in /usr/local/bin"
   [host dest]
+  {:post [(check-results %)]}
   (let [lein-url "https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein"
         edit (fn []
                (let [bashrc (file-sys/get-remote-file host "~/.bashrc")
@@ -244,6 +255,11 @@
   "Installs the redhat-ddns-client
 
   This should be called after the repo files have been installed."
-  []
+  [url]
+  (run (str "rpm -Uvh " url)))
 
+
+(defn install-vm
+  [location]
+  (let [cmd "virt-install -l %s "])
   )

@@ -2,6 +2,10 @@
 
 A Clojure library to help deploy and provision virtual machines
 
+# What is uplift for?
+
+
+
 ## Usage
 
 FIXME
