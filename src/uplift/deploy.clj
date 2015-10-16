@@ -42,20 +42,20 @@
 (defn install-uplift
   "Install uplift including any dependencies"
   [host]
+  {:post [#()]}
   (let [uplift-dir (get-in config [:config :uplift-dir])
-        uplift? (file-sys/file-exists? uplift-dir)]
-    (if uplift?
-      (ssh host (format "cd %s; git pull" uplift-dir))
-      (do
-        (when-not (which "git" :host host)
-          (uc/install-devtools host))
-        (core/git-clone host uplift-git)
-        (let [parent-dir (.getParent (java.io.File. uplift-dir))]
-          (when-not (file-sys/file-exists? parent-dir)
-            (ssh host (format "mkdir -p %s" parent-dir))
-            (ssh host (format "mv uplift %s" parents))))
-        ;; TODO: Change this to lein run when server is ready
-        (ssh host (format "cd %s; lein deps" uplift-dir))))))
+        uplift? (file-sys/file-exists? uplift-dir :host host)
+        parent-dir (.getParent (java.io.File. uplift-dir))
+        uplift-result (if uplift?
+                        (ssh host (format "cd %s; git pull" uplift-dir))
+                        (let [install-devtools (when-not (which "git" :host host)
+                                                 (uc/install-devtools host))
+                              clone-result (when-not (file-sys/file-exists? parent-dir)
+                                             (ssh host (format "mkdir -p %s" parent-dir))
+                                             (core/git-clone host uplift-git)
+                                             (ssh host (format "mv uplift %s" parent-dir)))]
+                          (ssh host (format "cd %s; lein deps" uplift-dir))))]
+    {:result uplift-result :parent-dir parent-dir :uplift-dir uplift-dir}))
 
 
 (defn copy-products
@@ -79,19 +79,26 @@
   1. Install repo file
   2. Install JVM
   3. Install leiningen"
-  [host version]
-  (let [ssh-result (uc/copy-ssh-key host)]
-    ssh-result)
-  (ur/install-repos host version)
-  (let [[_ major minor] (uc/check-java :host host)
-        _ (cond
-            (= major "0") (uc/install-jdk host 8)
-            (= major "7") nil
-            :else
-            (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))]
-    ;; Install leiningen and verify
-    (uc/install-lein host "/usr/local/bin/lein")
-    (when-not (-> (ssh host "lein version") :exit (= 0))
-      (throw (RuntimeException. "Unable to install leiningen")))
-    ;; Install uplift
-    (install-uplift host)))
+  [host version & {:keys [key-path auto-key-path]
+                   :or {key-path (get-in config [:config :ssh-pub-key])
+                        auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
+  ;(run "ssh-add")
+  (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
+        copy-autokey-res (uc/copy-ssh-key host :key-path)
+        repo-install-res (ur/install-repos host version)
+        [_ major minor] (uc/check-java :host host)
+        install-jdk-res (cond
+                          (= major "0") (uc/install-jdk host 8)
+                          (= major "7") nil
+                          :else (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))
+        ;; Install leiningen and verify
+        lein-install-res (do
+                           (uc/install-lein host "/usr/local/bin/lein")
+                           (let [lein-check (ssh host "lein version")]
+                             (if (-> lein-check :exit (= 0))
+                               true
+                               (throw (RuntimeException. "Unable to install leiningen")))))
+        ;; Install uplift
+        uplift-res (install-uplift host)]
+    {:copy-key-res copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
+     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res}))
