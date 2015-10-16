@@ -52,11 +52,14 @@
   "
   [^String host & {:keys [username key-path]
                    :or {username "root"
-                        key-path ""}}]
+                        key-path (get-in config [:config :ssh-pub-key])}}]
+  {:pre  [#(not (nil? (get-in config [:config :ssh-password])))
+          #(file-sys/file-exists? key-path)]
+   :post [#(= 0 (:exit %)) #(= 0 (-> (ssh host "ls") :exit))]}
   (let [deps (which "sshpass")
         sshpass-fmt "sshpass -e ssh-copy-id -i %s -o StrictHostKeyChecking=no %s@%s"
         base (format sshpass-fmt key-path username host)
-        env {:env {"SSHPASS" (:ssh-password config)}}
+        env {:env {"SSHPASS" (get-in config [:config :ssh-password])}}
         call (delay (run base env))]
     (if (nil? deps)
       (let [sshpass (run "yum install -y sshpass")]
@@ -114,7 +117,8 @@
   "Clones a git repo onto host"
   [host url & {:keys [dir]}]
   (let [udir (when-not dir
-               (-> (ucr/get-configuration) :uplift-dir (File.) (.getParent)))
+               (let [udir (get-in (ucr/get-configuration) [:config :uplift-dir])]
+                 (.getParent (File. udir))))
         dir (if dir dir udir)]
     (ssh host (format "cd %s; git clone %s" dir url))))
 
@@ -198,8 +202,13 @@
 
 (defn- check-results
   [results]
-  (and (reduce #(= 0 (:exit %)) (:results results))
-       (not (:exceptions? results))))
+  (letfn [(all-zero
+            [acc new]
+            (if (and acc (= 0 (:exit new)))
+              true
+              (reduced false)))]
+    (and (reduce all-zero true (:results results))
+         (not (:exceptions? results)))))
 
 
 (defn install-lein
@@ -220,8 +229,9 @@
                   (remote-download host lein-url dest)
                   (ssh host (format "chmod ug+x %s" dest))
                   (edit)
-                  (ssh host "'lein'"))]
-    {:results results :exceptions? (some #(instance? Exception %) results)}))
+                  (ssh host "'lein'"))
+        final {:results results :exceptions? (some #(instance? Exception %) results)}]
+    final))
 
 
 (defn lein-self-update
