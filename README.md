@@ -63,7 +63,7 @@ services.  The two services conceived of so far are a REST based API as well as 
 bus using TLS sockets with a binary data transfer (using fressian most likely)
 
 ![Image of Message Flow]
-(https://github.com/RedHatQE/uplift/tree/master/doc/MasterFlow.png)
+(https://github.com/RedHatQE/uplift/tree/dev/doc/MasterFlow.png)
 
 Since uplift can send events of interest, the client/server system should be asynchronous.  For
 example, with a log monitor, the client should be notified of an event when some text or pattern
