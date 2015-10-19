@@ -63,21 +63,52 @@
   (.read chan buf))
 
 
+;; Message Types
+;;
+;; Type              OpCode    Length  Description
+;; Connect           00        2       Connect and register with the Controller
+;; ServiceList       01        4       Get all connected service
+;; ServiceRequest    02        4       Call a service function and get data back
+;; SendData          03        8       Sends arbitrary data to server
+;; GetData           04        8       Retrieves arbitrary data from server
+;; SendEvent         05        8       Sends an Event type to the server
+;; Subscribe         06        4       Sends a subscription request to the server to listen for a topic
+;;
+(deftype UpliftMessage
+  [opcode                                                   ;; Determines msg type and length
+   source-id                                                ;; Address of source
+   source-port                                              ;; Port is the service type (akin to IP port)
+   dest-id                                                  ;; Address of destination
+   dest-port                                                ;; The port of the destination
+   length                                                   ;; number of bytes of params + data
+   data                                                     ;; transit data
+   ])
+
+
 (defprotocol UBuffer
-  "Encapsulates how to read and write from a buffer"
+  "Encapsulates how to read and write from a buffer
+
+  The type of the Buffer determines the actual implementation of reading and writing to it.
+  This protocol should be implemented by other types to encapsulate the implementation"
   (read-channel [this channel])
   (write-channel [this channel]))
+
+
+(defn decode-buff
+  "Decode the raw byte buffer into a data structure"
+  [data]
+  )
 
 
 (defrecord UByteBuffer [size]
   UBuffer
     (read-channel [this chan]
-      (let [data ])
       (loop [bytes-read (read-chan chan this)]
         (cond
           (> bytes-read 0)
             (do
               (.flip this)
+              ;; decode what's in the buffer
               )
           (= -1 bytes-read) )))
   )
@@ -153,13 +184,19 @@
 
 (defn client
   "Creates a client to a ServerSocketChannel and connects it"
-  [host port]
+  [^String host ^int port]
   (let [chan (SocketChannel/open)
         sock-addr (InetSocketAddress. host port)]
     (doto chan
       (.configureBlocking false)
       (.connect sock-addr))
     chan))
+
+
+(defn client-loop
+  [^SocketChannel chan ^InputStream is]
+
+  )
 
 
 (defn main-
