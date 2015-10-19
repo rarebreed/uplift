@@ -3,4 +3,10 @@
  :base-url #immuconf/default ""                             ;;
  :uplift-dir "/root/Projects/uplift"                        ;; Where to install uplift code on VM
  :ssh-password #immuconf/override ""                        ;; root password for VM
- :ddns-client  #immuconf/default ""}                        ;; (optional) url for ddns client rpm
+ :ddns-client  #immuconf/default ""                         ;; (optional) url for ddns client rpm
+ :ssh-pub-key #immuconf/override ""                         ;; path to public ssh key
+ :ssh-pub-key-auto #immuconf/default ""                     ;; path to public key for CI testing
+ :dependencies
+   {:rhel7 []
+    :rhel6 []}
+ }
