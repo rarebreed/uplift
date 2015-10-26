@@ -33,11 +33,52 @@
             [uplift.command :refer [run ssh which]]
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
-            [uplift.repos :as ur])
-  )
+            [uplift.repos :as ur]
+            [schema.core :as s]))
 
 (def config (ucr/get-configuration))
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
+
+
+(defprotocol DepInstall
+  "Functionality to install all needed dependencies for GUI testing"
+  (setup-repos [this])
+  (install-deps [this]))
+
+
+(defprotocol SystemSetup
+  "Functionality to call system services or other functionality"
+  (timectl [this])
+  (firewallctl [this]))
+
+
+(s/defrecord Distro
+             [name :- s/Str                                            ;; eg RHEL
+              version :- s/Str                                         ;; eg 7.2
+              hostname :- s/Str                                        ;; eg my.home.org
+              bld-version :- s/Str                                      ;; a build name eg RHEL-7.1-20140630
+              ]
+             )
+
+
+(defrecord RHEL7 [distro]
+  DepInstall
+  (install-deps [this]
+    nil)
+
+  SystemSetup
+  (firewallctl [this])
+  (timectl [this]))
+
+(defrecord RHEL6 [distro]
+  DepInstall)
+
+(defn factory
+  "Returns a Distro"
+  [host]
+  (let [info nil])
+  )
+
 
 (defn install-uplift
   "Install uplift including any dependencies"
@@ -84,7 +125,7 @@
                         auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
   ;(run "ssh-add")
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
-        copy-autokey-res (uc/copy-ssh-key host :key-path)
+        copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
         repo-install-res (ur/install-repos host version)
         [_ major minor] (uc/check-java :host host)
         install-jdk-res (cond

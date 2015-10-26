@@ -4,8 +4,11 @@
             [clj-commons-exec :as exec]
             [clj-ssh.ssh :as sshs]
             [clj-ssh.cli :as sshc]
-            [schema.core :as s])
-  (:import [java.io OutputStream InputStream]))
+            [schema.core :as s]
+            [clojure.string :refer [split]])
+  (:import [java.io BufferedReader InputStreamReader OutputStream InputStream]
+           [java.lang ProcessBuilder]
+           [java.io File]))
 
 (sshc/default-session-options {:strict-host-key-checking :no})
 
@@ -17,6 +20,7 @@
     (timbre/logf loglvl "On %s| Executing command: %s" host cmd)
     (let [opts (merge opts {:username username})
           args (->> (dissoc opts :loglvl) (items) (concat [host cmd]))]
+      (timbre/info args)
       (apply sshc/ssh args))))
 
 
@@ -80,40 +84,141 @@
   "Any object that supports execution of a system command should implement this"
   (call [this]))
 
-;; Wraps the notion of a command.  All fields are optional except cmd
-(s/defrecord Command [cmd :- s/Str           ;; command string to execute
-                      host :- s/Str          ;; hostname or IP
-                      log :- s/Str           ;; Path to a log file
-                      env                    ;; Map of env vars
-                      in :- InputStream      ;; InputStream to stdin
-                      out :- OutputStream    ;; OutputStream of stdout
-                      err :- OutputStream    ;; OutputStream of stderr
-                      closed                 ;; Map of file streams to close
-                      shutdown? :- Boolean   ;; Close process on VM exit
-                      result-handler-fn]     ;; fn that decides success
-  Executor
-  (call
-    [this]
-    (let [opts (dissoc this :cmd :host)]
-      (run (:cmd this) opts))))
-
-
-(defn make-command
-  "constructor for a Command object"
-  [cmd & {:keys [host env log in out err closed log shutdown? result-handler-fn]
-          :as opts
-          :or {host nil
-               env nil
-               log ""
-               in nil
-               out nil
-               err false
-               closed []
-               shutdown? false
-               result-handler-fn nil}}]
-  (map->Command (assoc opts :cmd cmd)))
 
 ;; make sure we add ssh-add
 (defn ssh-add
   []
   (run "ssh-add"))
+
+;; ==========================================================================================
+;; reimplementation of the teleproc project in clojure
+;; ==========================================================================================
+
+(defn set-dir!
+  [pb dir]
+  {:pre [#(if dir (.exists dir) true)]}
+  (when dir
+    (.directory pb dir))
+  pb)
+
+(defn set-env!
+  [pb env]
+  (when env
+    (.environment pb env))
+  pb)
+
+(defn combine-err!
+  [pb combine?]
+  (.redirectErrorStream pb combine?)
+  pb)
+
+;; TODO: ughhh, make this a protocol function on Executor
+(defn is-alive-process
+  [obj]
+  (.isAlive obj))
+
+(defn is-alive-ssh
+  [obj]
+  (= (.getExitStatus obj) -1))
+
+;; TODO: hook the stdout into a network channel
+(defn get-output
+  [proc alive-fn]
+  (let [inp (-> (.getInputStream proc) InputStreamReader. BufferedReader.)]
+    (loop [line (.readLine inp)
+           alive? (alive-fn proc)]
+      (cond line (do
+                   (println line)
+                   (recur (.readLine inp) (alive-fn proc)))
+            (not alive?) (do
+                           (println line)
+                           proc)))))
+
+
+(defn launch
+  "Launches a subprocess
+
+  If input, output or error are non-nil, creates a Redirector"
+  [cmdr]
+  (let [pb (ProcessBuilder. (:cmd cmdr))
+        build (comp #(combine-err! % (:combine-err? cmdr))
+                    #(set-env! % (:env cmdr))
+                    set-dir!)
+        _ (build pb (:work-dir cmdr))
+        proc (.start pb)]
+    (if (:block? cmdr)
+      (do
+        (get-output proc is-alive-process)
+        proc)
+      (future (get-output proc is-alive-process)))))
+
+
+(defrecord Commander
+  [cmd                                                      ;; vector of String
+   ^File work-dir                                           ;; working directory
+   env                                                      ;; environment map to be used by process
+   ^OutputStream input                                      ;; An InputStream connected to child process stdin
+   ^InputStream output                                      ;; An OutputStream to contain stdout
+   ^InputStream error                                       ;; An OutputStream connected to stderr
+   ^Boolean combine-err?                                    ;; redirect stderr to stdout?
+   ^Boolean block?
+   close                                                    ;; map of which streams to close :in, :out :err
+   result-handler                                           ;; fn to determine success
+   watch-handler                                            ;; function launched in a separate thread
+   ]
+  Executor
+  (call [cmdr]
+    (launch cmdr)))
+
+
+(defn make-commander
+  "Creates a Commander object"
+  [cmd & {:keys [work-dir env input output error combine-err? block? close result-handler watch-handler]
+          :or   {combine-err?   true
+                 block?         true
+                 close          {:in false :out false :err false}
+                 result-handler (fn [res]
+                                  (= 0 (:out res)))}
+          :as   opts}]
+  (map->Commander (merge opts {:cmd cmd
+                               :work-dir (when work-dir
+                                           (File. work-dir))
+                               :combine-err? combine-err?
+                               :block? block?
+                               :close close
+                               :result-handler result-handler})))
+
+
+(defn get-ssh-output
+  "Reader for jsch Channel"
+  [ssh-res alive-fn]
+  (let [chan (:channel ssh-res)
+        os (-> (.getInputStream chan) InputStreamReader. BufferedReader.)]
+    (if (not (.isConnected chan))
+      (.connect chan))
+    (println "connected? " (.isConnected chan))
+    (loop [status (alive-fn chan)]
+      (if status
+        (let [line (.readLine os)]
+          (println line)
+          (recur (alive-fn chan)))
+        (do
+          (println "Finished with status: " (.getExitStatus chan))
+          ssh-res)))))
+
+
+(defn runner [host cmd]
+  (let [ssh-res (ssh host cmd :out :stream)]
+    (future (get-ssh-output ssh-res is-alive-ssh))))
+
+
+;; TODO: make a defrecord for ssh which implements the Executor protocol
+
+(defrecord SSHCommander
+  [^String host
+   ^String cmd
+   ;; TODO: what else do we need?
+   ]
+  Executor
+  (call [this]
+    (runner (:host this) (:cmd this))))
