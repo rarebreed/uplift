@@ -16,9 +16,10 @@ automated.
   - checksum calculation (low-priority)
   - create activation key
   - candlepin API wrappers
-  - Look into ability to call with SSH/ProcessBuilder and grabbing stdout as it runs
-    - The clojure commons exec appears to have this, and the ssh might too
+  - ~~Look into ability to call with SSH/ProcessBuilder and grabbing stdout as it runs~~
+    - ~~The clojure commons exec appears to have this, and the ssh might too~~
     - Need to pump the stdout back across a websocket or socket if remote
+    - Need to save output to StringBuilder or something like it
   - /var/log/rhsm/rhsm.log monitor
     - Mechanism to write logic to send event when something of interest is seen
 - Create an agent that uses messaging system
