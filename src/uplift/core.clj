@@ -265,8 +265,11 @@
   "Installs the redhat-ddns-client
 
   This should be called after the repo files have been installed."
-  [url]
-  (run (str "rpm -Uvh " url)))
+  [& url]
+  (let [url-path (if (empty? url)
+                   (get-in config [:config :ddns-client])
+                   url)]
+    (run (str "rpm -Uvh " url-path))))
 
 
 (defn install-vm

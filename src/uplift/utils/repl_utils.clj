@@ -3,6 +3,12 @@
             [clojure.pprint :as cpp])
   (:import [java.nio.file Paths Path]))
 
+(comment
+  (do
+    (require '[clojure.reflect :as cr]
+             '[clojure.pprint :as cpp]))
+  )
+
 (defn ptable
   [obj & exclusions]
   (let [refl (cr/reflect obj)

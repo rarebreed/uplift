@@ -125,7 +125,7 @@
                         auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
   ;(run "ssh-add")
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
-        copy-autokey-res (uc/copy-ssh-key host :key-path)
+        copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
         repo-install-res (ur/install-repos host version)
         [_ major minor] (uc/check-java :host host)
         install-jdk-res (cond

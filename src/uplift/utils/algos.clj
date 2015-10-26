@@ -36,3 +36,9 @@
 
 (defn all? [coll]
   (every? #(when % %) coll))
+
+
+(defn rand-coll
+  "Get random elements from a collection"
+  [coll size]
+  (take size (shuffle coll)))
