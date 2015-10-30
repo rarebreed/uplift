@@ -2,12 +2,13 @@
   (:import [java.nio.channels ServerSocketChannel SocketChannel Selector SelectionKey]
            [java.nio CharBuffer ByteBuffer]
            [java.nio.charset Charset]
-           [java.net InetSocketAddress]
+           [java.net InetSocketAddress StandardSocketOptions]
            [java.util NoSuchElementException]
            [clojure.lang PersistentArrayMap]
            (java.util NoSuchElementException))
-  (:require [schema.core :as s])
-  )
+  (:require [schema.core :as s]
+            [uplift.utils.repl-utils :refer [ptable]]
+            [taoensso.timbre :as timbre :refer [log info debug spy]]))
 
 (def chan-type "channel-type")
 (def server-chan "server-channel")
@@ -16,13 +17,15 @@
 (s/defrecord Server
   [host :- s/Str
    port :- s/Int
-   blocking?
-   server-chan :- ServerSocketChannel])
+   block?
+   channel :- ServerSocketChannel
+   selector :- Selector
+   sel-key])
 
 (defn attach-chan
   "Attach SelectorKey to a channel type"
-  [{:keys [chan select-key]}]
-  (.attach select-key {chan-type server-chan}))
+  [{:keys [sel-key]}]
+  (.attach sel-key {chan-type server-chan}))
 
 
 (defn make-server-socket-chan
@@ -39,16 +42,22 @@
         _ (doto ss-chan
             (.bind (java.net.InetSocketAddress. host port))
             (.configureBlocking block?))
+        ssh-chan (.setOption ss-chan (. StandardSocketOptions SO_REUSEADDR) true)
         selector (if selector
                    selector
                    (Selector/open))
+        ;; register the channel to the selector
         selkey (.register ss-chan selector (SelectionKey/OP_ACCEPT))
-        info {:chan ss-chan :select-key selkey :selector selector}]
-    (attach-chan info)
-    info))
+        _ (info "registered selector:" selector "to channel: " ss-chan)
+        sinfo (map->Server {:host host :port port :block? block?
+                           :channel ss-chan :sel-key selkey :selector selector})]
+    (attach-chan sinfo)
+    (info "attaching data to SelectionKey")
+    sinfo))
 
 ;; TODO: turn this into a defprotocol or multimethod
 (defn pump-buffer [channel buff]
+  (info "in pump-buffer getting data")
   (loop [more? (.hasRemaining buff)]
     (when more?
       (let [charset (Charset/defaultCharset)
@@ -56,9 +65,9 @@
         (.write channel encoded))
       (recur (.hasRemaining buff)))))
 
-
+;; Reading from a channel is consistent across channel and buffer types
 (defn read-chan
-  "Reading from a channel is consistent across channel and buffer types"
+  ""
   [chan buf]
   (.read chan buf))
 
@@ -105,13 +114,11 @@
     (read-channel [this chan]
       (loop [bytes-read (read-chan chan this)]
         (cond
-          (> bytes-read 0)
-            (do
-              (.flip this)
-              ;; decode what's in the buffer
-              )
-          (= -1 bytes-read) )))
-  )
+          (> bytes-read 0) (do
+                             (.flip this)
+                             ;; decode what's in the buffer
+                             (recur (read-chan chan this)))
+          (= -1 bytes-read) chan))))
 
 
 (defn make-buffer []
@@ -122,10 +129,11 @@
   "Registers the client SocketChannel with the Selector and confirms to the client
   it is connected"
   [client-channel selector]
+  (info "registering client")
   (.configureBlocking client-channel false)
   (let [buff (make-buffer)
         client-key (.register client-channel selector SelectionKey/OP_READ SelectionKey/OP_WRITE)]
-    (.attach client-key {chan-type client-channel})
+    (.attach client-key {chan-type client-chan})
     (pump-buffer client-channel buff)))
 
 
@@ -136,41 +144,48 @@
   If the accept isn't null, we have the SocketChannel from the client.  It registers the
   client SocketChannel with the selector"
   [key selector]
+  (info "accepting incoming connection")
   (let [server-sock-chan (.channel key)
+        _ (info "retrieved server socket channel from:" key)
         client-sock-chan (.accept server-sock-chan)]
     ;; Check if the .accept returns nil, since the ServerSocketChannel was marked non-blocking
     (when (not (nil? client-sock-chan))
       (register-client-chan client-sock-chan selector))))
 
 
-(defn iterate-keys
-  [selector]
+;; FIXME: broken due http://dev.clojure.org/jira/browse/CLJ-1243
+;; rewrite this in java
+(defn select
+  ""
+  [^Selector selector]
   (let [selected-keys (.selectedKeys selector)
-        _ (println (type selected-keys))
-        iter (.iterator selected-keys)
         get-next #(try
-                   (.next iter)
+                   (.next %)
                    (catch NoSuchElementException e
                      nil))]
-    (loop [next- (get-next)
-           acc []]
+    (loop [next- (get-next (.iterator selected-keys))]
        (if next-
          ;;
          (let [selection-key next-
                sc (.attachment selection-key)
-               channel-type (get sc chan-type)]
+               channel-type (get sc chan-type)
+               ;; FIXME: remove key after its been handled
+               new-iter (.iterator selected-keys)
+               _ (ptable new-iter)]
            (if (= server-chan channel-type)
              ;; In this case we have a new connection from a client
              (accept selection-key selector)
              ;; Otherwise we have data available on the socket
              nil
              )
-           (recur (get-next) (conj acc sc)))
-         acc))))
+           (.remove new-iter)
+           (recur (get-next new-iter)))))))
 
 
 (defn serve
-  "Starts the ServerSocketChannel to listen for incoming requests"
+  "Starts the ServerSocketChannel to listen for incoming requests
+
+  It picks a "
   [selector]
   (loop [continue? true]  ;; flag to stop looping
     ;; .select is a blocking method which returns when one of the registered channels is
@@ -179,12 +194,13 @@
       (if (and continue? (not= selection 0))
         (recur true)
         (do
-          (iterate-keys selector))))))
+          (log :info "got IO event")
+          (select selector))))))
 
 
 (defn client
   "Creates a client to a ServerSocketChannel and connects it"
-  [^String host ^int port]
+  [^String host ^long port]
   (let [chan (SocketChannel/open)
         sock-addr (InetSocketAddress. host port)]
     (doto chan
@@ -193,17 +209,42 @@
     chan))
 
 
-(defn client-loop
-  [^SocketChannel chan ^InputStream is]
+(defn get-chan-data
+  [chan buff]
+  (let [charset (Charset/defaultCharset)]
+    (loop [count (.read chan buff)
+           msg ""]
+      (if (-> count (> 0))
+        (do
+          (.flip buff)
+          (recur (.read chan buff) (str msg (.decode charset buff))))
+        msg))))
 
-  )
+
+(defn client-loop
+  [^SocketChannel chan]
+  (while (not (.finishConnect chan))
+    (println "Waiting to connect..."))
+
+  ;; read data from the channel
+  (let [buff (ByteBuffer/allocate 256)]
+    (loop [chan-msg (get-chan-data chan buff)]
+      (when (-> (count chan-msg) (> 0))
+        (println chan-msg)
+        (let [charset (Charset/defaultCharset)
+              out-buf (.wrap CharBuffer "Hello server")]
+          (while (.hasRemaining out-buf)
+            (.write chan (.encode charset out-buf)))))
+      (recur (get-chan-data chan buff)))))
 
 
 (defn main-
   "Starts a ServerSocketChannel"
   [host port]
   (let [server-sock-chan (make-server-socket-chan host port)
-        {:keys [chan select-key selector]} server-sock-chan
-        client (client host port)]
-    ;; Start the ServerSocketChannel to listen for incoming data/connections
-    (serve selector)))
+        {:keys [selector]} server-sock-chan
+        client-chan (client host port)]
+    ;; Start the ServerSocketChannel to listen for incoming data/connections in its own thread
+    (future (serve selector))
+    ;; start the client in the main thread
+    (client-loop client-chan)))

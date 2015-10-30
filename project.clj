@@ -1,12 +1,13 @@
 (defproject uplift "0.1.0-SNAPSHOT"
-  :description "FIXME: write description"
-  :url "http://example.com/FIXME"
+  :description (str "A clojure library to help setup development environments for "
+                 "Red Hat Subscription Manager testing")
+  :url "https://github.com/RedHatQE/uplift"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [clj-ssh "0.5.11"]
                  [commons-net "3.3"]
-                 [com.taoensso/timbre "3.3.1"]
+                 [com.taoensso/timbre "4.1.4"]
                  [org.clojars.hozumi/clj-commons-exec "1.2.0"]
                  [levand/immuconf "0.1.0"]
                  [clj-webdriver "0.7.2"]

@@ -13,9 +13,11 @@
 (sshc/default-session-options {:strict-host-key-checking :no})
 
 ;; NOTE: Use this function if you're working at the REPL
-(defn ssh [host cmd & {:keys [username loglvl]
-                       :as opts
-                       :or {username "root" loglvl :info}}]
+(defn ssh
+  ""
+  [host cmd & {:keys [username loglvl]
+               :as opts
+               :or {username "root" loglvl :info}}]
   (do
     (timbre/logf loglvl "On %s| Executing command: %s" host cmd)
     (let [opts (merge opts {:username username})
@@ -53,17 +55,6 @@
     (assoc result :cmd (->> cmd-s (interpose " ") (apply str)))))
 
 
-(defn run+
-  [cmd & {:keys [in out throw? block?]
-          :as opts
-          :or {throw? false block? true}}]
-  (let [cmd-str (clojure.string/split cmd #" ")
-        result (if block?
-                 @(exec/sh cmd-str)
-                 (exec/sh cmd-str))]
-    result))
-
-
 (defn execute
   [cmd & {:keys [host]}]
   (if host
@@ -89,6 +80,21 @@
 (defn ssh-add
   []
   (run "ssh-add"))
+
+;; ==========================================================================================
+;; log producer and consumer
+;; ==========================================================================================
+
+(defrecord LogProducer
+  [;; core.async channel to put lines into
+   log-channel
+   ;; a function that possibly transforms a line before being put into log-channel
+   transformer
+   ])
+
+
+(defrecord LogConsumer
+  [log-channel])
 
 ;; ==========================================================================================
 ;; reimplementation of the teleproc project in clojure
@@ -123,16 +129,16 @@
 
 ;; TODO: hook the stdout into a network channel
 (defn get-output
-  [proc alive-fn]
+  [proc & {:keys [logged]}]
   (let [inp (-> (.getInputStream proc) InputStreamReader. BufferedReader.)]
     (loop [line (.readLine inp)
-           alive? (alive-fn proc)]
+           alive? (is-alive-process proc)]
+      (println line)
       (cond line (do
-                   (println line)
-                   (recur (.readLine inp) (alive-fn proc)))
-            (not alive?) (do
-                           (println line)
-                           proc)))))
+                   (when logged
+                     (.append logged line))
+                   (recur (.readLine inp) (is-alive-process proc)))
+            (not alive?) proc))))
 
 
 (defn launch
@@ -157,11 +163,12 @@
   [cmd                                                      ;; vector of String
    ^File work-dir                                           ;; working directory
    env                                                      ;; environment map to be used by process
-   ^OutputStream input                                      ;; An InputStream connected to child process stdin
-   ^InputStream output                                      ;; An OutputStream to contain stdout
+   ^OutputStream input                                      ;; A stream to send data to stdin
+   ^InputStream output                                      ;; A stream to contain stdout
    ^InputStream error                                       ;; An OutputStream connected to stderr
    ^Boolean combine-err?                                    ;; redirect stderr to stdout?
    ^Boolean block?
+   logged!                                                  ;; holds output/err
    close                                                    ;; map of which streams to close :in, :out :err
    result-handler                                           ;; fn to determine success
    watch-handler                                            ;; function launched in a separate thread
@@ -173,14 +180,17 @@
 
 (defn make-commander
   "Creates a Commander object"
-  [cmd & {:keys [work-dir env input output error combine-err? block? close result-handler watch-handler]
+  [cmd & {:keys [work-dir env input output error combine-err? block? logged! close result-handler watch-handler]
           :or   {combine-err?   true
                  block?         true
+                 logged!         (StringBuilder.)
                  close          {:in false :out false :err false}
                  result-handler (fn [res]
                                   (= 0 (:out res)))}
           :as   opts}]
-  (map->Commander (merge opts {:cmd cmd
+  (map->Commander (merge opts {:cmd (if (= String (class cmd))
+                                      (split cmd #"\s+")
+                                      cmd)
                                :work-dir (when work-dir
                                            (File. work-dir))
                                :combine-err? combine-err?
@@ -190,18 +200,23 @@
 
 
 (defn get-ssh-output
-  "Reader for jsch Channel"
-  [ssh-res alive-fn]
+  "Reader for jsch Channel
+
+  *args*
+  ssh-res: "
+  [ssh-res & {:keys [logged]}]
   (let [chan (:channel ssh-res)
         os (-> (.getInputStream chan) InputStreamReader. BufferedReader.)]
     (if (not (.isConnected chan))
       (.connect chan))
     (println "connected? " (.isConnected chan))
-    (loop [status (alive-fn chan)]
+    (loop [status (is-alive-ssh chan)]
       (if status
         (let [line (.readLine os)]
           (println line)
-          (recur (alive-fn chan)))
+          (when logged
+            (.append logged line))
+          (recur (is-alive-ssh chan)))
         (do
           (println "Finished with status: " (.getExitStatus chan))
           ssh-res)))))
@@ -211,8 +226,6 @@
   (let [ssh-res (ssh host cmd :out :stream)]
     (future (get-ssh-output ssh-res is-alive-ssh))))
 
-
-;; TODO: make a defrecord for ssh which implements the Executor protocol
 
 (defrecord SSHCommander
   [^String host
