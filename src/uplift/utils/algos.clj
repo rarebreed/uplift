@@ -42,3 +42,9 @@
   "Get random elements from a collection"
   [coll size]
   (take size (shuffle coll)))
+
+
+(defn comp<
+  "A reverse comp that works from left to right"
+  [& fns]
+  (apply comp (reverse fns)))
