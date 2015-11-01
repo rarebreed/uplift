@@ -16,4 +16,6 @@
                  [prismatic/schema "1.0.1"]
                  [org.clojure/tools.cli "0.3.3"]]
 
-  :main uplift.deploy)
+  :java-source-paths ["src"]
+  :aot :all
+  :main uplift.messaging.core)

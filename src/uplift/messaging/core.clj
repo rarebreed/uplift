@@ -4,7 +4,7 @@
            [java.nio.charset Charset]
            [java.net InetSocketAddress StandardSocketOptions]
            [java.util NoSuchElementException]
-           [clojure.lang PersistentArrayMap]
+           [uplift.messaging UpliftSelect]
            (java.util NoSuchElementException))
   (:require [schema.core :as s]
             [uplift.utils.repl-utils :refer [ptable]]
@@ -41,8 +41,8 @@
   (let [ss-chan (ServerSocketChannel/open)
         _ (doto ss-chan
             (.bind (java.net.InetSocketAddress. host port))
-            (.configureBlocking block?))
-        ssh-chan (.setOption ss-chan (. StandardSocketOptions SO_REUSEADDR) true)
+            (.configureBlocking block?)
+            (.setOption  (. StandardSocketOptions SO_REUSEADDR) true))
         selector (if selector
                    selector
                    (Selector/open))
@@ -155,31 +155,32 @@
 
 ;; FIXME: broken due http://dev.clojure.org/jira/browse/CLJ-1243
 ;; rewrite this in java
-(defn select
-  ""
-  [^Selector selector]
-  (let [selected-keys (.selectedKeys selector)
-        get-next #(try
-                   (.next %)
-                   (catch NoSuchElementException e
-                     nil))]
-    (loop [next- (get-next (.iterator selected-keys))]
-       (if next-
-         ;;
-         (let [selection-key next-
-               sc (.attachment selection-key)
-               channel-type (get sc chan-type)
-               ;; FIXME: remove key after its been handled
-               new-iter (.iterator selected-keys)
-               _ (ptable new-iter)]
-           (if (= server-chan channel-type)
-             ;; In this case we have a new connection from a client
-             (accept selection-key selector)
-             ;; Otherwise we have data available on the socket
-             nil
-             )
-           (.remove new-iter)
-           (recur (get-next new-iter)))))))
+(comment
+  (defn select
+    ""
+    [^Selector selector]
+    (let [selected-keys (.selectedKeys selector)
+          get-next #(try
+                     (.next %)
+                     (catch NoSuchElementException e
+                       nil))]
+      (loop [next- (get-next (.iterator selected-keys))]
+        (if next-
+          ;;
+          (let [selection-key next-
+                sc (.attachment selection-key)
+                channel-type (get sc chan-type)
+                ;; FIXME: remove key after its been handled
+                new-iter (.iterator selected-keys)
+                _ (ptable new-iter)]
+            (if (= server-chan channel-type)
+              ;; In this case we have a new connection from a client
+              (accept selection-key selector)
+              ;; Otherwise we have data available on the socket
+              nil
+              )
+            (.remove new-iter)
+            (recur (get-next new-iter))))))))
 
 
 (defn serve
@@ -195,7 +196,7 @@
         (recur true)
         (do
           (log :info "got IO event")
-          (select selector))))))
+          (UpliftSelect/select selector))))))
 
 
 (defn client
