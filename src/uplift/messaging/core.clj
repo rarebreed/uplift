@@ -10,9 +10,9 @@
             [uplift.utils.repl-utils :refer [ptable]]
             [taoensso.timbre :as timbre :refer [log info debug spy]]))
 
-(def chan-type "channel-type")
-(def server-chan "server-channel")
-(def client-chan "client-channel")
+(def chan-type "channelType")
+(def server-chan "serverChannel")
+(def client-chan "clientChannel")
 
 (s/defrecord Server
   [host :- s/Str
@@ -25,6 +25,7 @@
 (defn attach-chan
   "Attach SelectorKey to a channel type"
   [{:keys [sel-key]}]
+  ;; when SelectionKey.attachment() is called, it will get this map
   (.attach sel-key {chan-type server-chan}))
 
 
@@ -192,11 +193,12 @@
     ;; .select is a blocking method which returns when one of the registered channels is
     ;; selected.  A socket client will be added to the list of registered channels
     (let [selection (.select selector)]
-      (if (and continue? (not= selection 0))
-        (recur true)
+      (info "select is done blocking")
+      (if (not= selection 0)
         (do
           (log :info "got IO event")
-          (UpliftSelect/select selector))))))
+          (UpliftSelect/select selector))))
+    (recur true)))
 
 
 (defn client
@@ -215,8 +217,9 @@
   (let [charset (Charset/defaultCharset)]
     (loop [count (.read chan buff)
            msg ""]
-      (if (-> count (> 0))
+      (if (> count 0)
         (do
+          (info count "bytes to read in " chan)
           (.flip buff)
           (recur (.read chan buff) (str msg (.decode charset buff))))
         msg))))
@@ -230,11 +233,12 @@
   ;; read data from the channel
   (let [buff (ByteBuffer/allocate 256)]
     (loop [chan-msg (get-chan-data chan buff)]
-      (when (-> (count chan-msg) (> 0))
-        (println chan-msg)
+      (when (> (count chan-msg) 0)
+        (info chan-msg)
         (let [charset (Charset/defaultCharset)
-              out-buf (.wrap CharBuffer "Hello server")]
+              out-buf (CharBuffer/wrap "Hello server")]
           (while (.hasRemaining out-buf)
+            (info "writing to server")
             (.write chan (.encode charset out-buf)))))
       (recur (get-chan-data chan buff)))))
 
