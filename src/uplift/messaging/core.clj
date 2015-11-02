@@ -60,6 +60,7 @@
     (info "attaching data to SelectionKey")
     sinfo))
 
+
 ;; TODO: turn this into a defprotocol or multimethod
 (defn pump-buffer [channel buff]
   (info "in pump-buffer getting data")
@@ -77,23 +78,25 @@
   (.read chan buf))
 
 
+;; FIXME: Should we have a dbus compatibility layer here?  Or an adapter from UpliftMessages to dbus messages?
 ;; Message Types
 ;;
 ;; Type              OpCode    Length  Description
 ;; Connect           00        2       Connect and register with the Controller
 ;; ServiceList       01        4       Get all connected service
 ;; ServiceRequest    02        4       Call a service function and get data back
-;; SendData          03        8       Sends arbitrary data to server
-;; GetData           04        8       Retrieves arbitrary data from server
-;; SendEvent         05        8       Sends an Event type to the server
-;; Subscribe         06        4       Sends a subscription request to the server to listen for a topic
+;; ServiceIntrospect 03        4       Get API of a service
+;; SendData          04        8       Sends arbitrary data to server
+;; GetData           05        8       Retrieves arbitrary data from server
+;; SendEvent         06        8       Sends an Event type to the server
+;; Subscribe         07        4       Sends a subscription request to the server to listen for a topic
 ;;
 (deftype UpliftMessage
   [opcode                                                   ;; Determines msg type and length
-   source-id                                                ;; Address of source
-   source-port                                              ;; Port is the service type (akin to IP port)
-   dest-id                                                  ;; Address of destination
-   dest-port                                                ;; The port of the destination
+   source-addr                                              ;; Address of source
+   source-id                                                ;; id is the service type (akin to IP port)
+   dest-addr                                                ;; Address of destination
+   dest-id                                                  ;; The id of the destination
    length                                                   ;; number of bytes of params + data
    data                                                     ;; transit data
    ])
@@ -109,21 +112,21 @@
 
 
 (defn decode-buff
-  "Decode the raw byte buffer into a data structure"
-  [data]
+  "Decode the raw byte buffer into a data structure.  Generally, decoding will be based on the opcode of the message"
+  [msg]
   )
 
 
 (defrecord UByteBuffer [size]
   UBuffer
-    (read-channel [this chan]
-      (loop [bytes-read (read-chan chan this)]
-        (cond
-          (> bytes-read 0) (do
-                             (.flip this)
-                             ;; decode what's in the buffer
-                             (recur (read-chan chan this)))
-          (= -1 bytes-read) chan))))
+  (read-channel [this chan]
+    (loop [bytes-read (read-chan chan this)]
+      (cond
+        (> bytes-read 0) (do
+                           (.flip this)
+                           ;; decode what's in the buffer
+                           (recur (read-chan chan this)))
+        (= -1 bytes-read) chan))))
 
 
 (defn make-buffer []
