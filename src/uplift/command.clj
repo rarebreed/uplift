@@ -136,7 +136,7 @@
       (println line)
       (cond line (do
                    (when logged
-                     (.append logged line))
+                     (.append logged (str line "\n")))
                    (recur (.readLine inp) (is-alive-process proc)))
             (not alive?) proc))))
 
@@ -154,9 +154,9 @@
         proc (.start pb)]
     (if (:block? cmdr)
       (do
-        (get-output proc is-alive-process)
+        (get-output proc :logged (:logged! cmdr))
         proc)
-      (future (get-output proc is-alive-process)))))
+      (future (get-output proc :logged (:logged! cmdr))))))
 
 
 (defrecord Commander
@@ -183,7 +183,7 @@
   [cmd & {:keys [work-dir env input output error combine-err? block? logged! close result-handler watch-handler]
           :or   {combine-err?   true
                  block?         true
-                 logged!         (StringBuilder.)
+                 logged!        (StringBuilder.)
                  close          {:in false :out false :err false}
                  result-handler (fn [res]
                                   (= 0 (:out res)))}
@@ -195,6 +195,7 @@
                                            (File. work-dir))
                                :combine-err? combine-err?
                                :block? block?
+                               :logged! logged!
                                :close close
                                :result-handler result-handler})))
 
@@ -215,7 +216,7 @@
         (let [line (.readLine os)]
           (println line)
           (when logged
-            (.append logged line))
+            (.append logged (str line "\n")))
           (recur (is-alive-ssh chan)))
         (do
           (println "Finished with status: " (.getExitStatus chan))
