@@ -240,13 +240,6 @@
   @(run "lein upgrade"))
 
 
-(defn set-grub-cmdline
-  [key val & {:keys [path]
-              :or {path ""}}]
-  ;; TODO: Get the vecmap for the grub.conf file, and set a new key|val pair
-  )
-
-
 (defn setup-system-time
   "Runs ntpd on system"
   [])
@@ -273,6 +266,12 @@
 
 
 (defn install-vm
+  "Uses virt-install to install a virtual machine"
   [location]
   (let [cmd "virt-install -l %s "])
   )
+
+
+(defn create-dogtail-repo
+  "Creates the dogtail repo to install dogtail"
+  [])

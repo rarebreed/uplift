@@ -11,10 +11,6 @@
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
 (def latest-rhel7-server-debuginfo "[latest-rhel7-server-debuginfo]")
-(def repodata {:debug "debug/tree"
-               :prod "os"})
-
-(def c (ucr/get-configuration))
 (def user-config (let [home (System/getProperty "user.home")
                        usr-cfg (get (cfg/load "resources/dev.edn") :user-config)]
                    (str home usr-cfg)))
@@ -24,6 +20,7 @@
 
 (defprotocol ToConfig
   (write-to-config [this filename] "Creates a config file representation"))
+
 
 (defn- write-conf [obj fname]
   (letfn [(mkstr [key]
@@ -37,6 +34,7 @@
         (.write newfile line))
       (.newLine newfile))))
 
+
 (defrecord YumRepo
     [^String reponame  ;; The section eg [latest-rhel7-server
      ^String name      ;; description of repo
@@ -47,19 +45,6 @@
   ToConfig
   (write-to-config [this filename]
     (write-conf this filename)))
-
-(comment
-    (letfn [(mkstr [key]
-              (let [keyname (clojure.core/name key)
-                    val (key this)]
-                (str keyname "=" val)))]
-    (with-open [newfile (cjio/writer filename :append true)]
-      (.write newfile (:reponame this))
-      (.newLine newfile)
-      (doseq [line (map mkstr [:name :baseurl :enabled :gpgcheck])]
-        (.write newfile line))
-      (.newLine newfile)))
-    )
 
 
 (defn build-url-rhel
@@ -77,6 +62,7 @@
   (let [type (name rtype)
         repod (if debug "debug/tree" "os")]
     (format url-fmt type version flavor arch repod)))
+
 
 (defn make-base-server
   [rtype version repo & {:keys [url url-fmt flavor arch enabled gpgcheck description debug]
@@ -104,19 +90,23 @@
          :gpgcheck gpgcheck}
         map->YumRepo)))
 
+
 ;; TODO Make a macro to autogenerate 
 (defn latest-rel-eng-server
   "Convenience function to make latest repo"
   [version]
   (make-base-server :rel-eng version latest-rhel7-server))
 
+
 (defn latest-released-server
   [version]
   (make-base-server :released version latest-rhel7-server))
 
+
 (defn latest-nightly-server
   [version]
   (make-base-server :nightly version latest-rhel7-server))
+
 
 (defn make-default-repo-file
   "Creates a repo file in /etc/yum.repos.d/rhel-latest.repo"
@@ -133,8 +123,10 @@
       (write-to-config latest-debuginfo fpath)))
   (println (slurp fpath)))
 
+
 (defn get-page [url]
   (slurp url))
+
 
 (defn make-dotted-version-regex
   [version]
@@ -143,6 +135,7 @@
         right "[a-zA-Z0-9._/-]*)<"
         final (str left base right)]
     (re-pattern final)))
+
 
 (defn scrape
   "Some sites dont have a REST API so here's a dumb regex to look for some version
@@ -156,12 +149,14 @@
     ;; we only want the second in each
     (map #(second %) matched)))
 
+
 (defn find-all
   ""
   [url version]
   (let [patt (make-dotted-version-regex version)
         page (get-page url)]
     (scrape page patt)))
+
 
 (defn make-links [url version]
   (let [sep (if (not= (last url) \/) "/" "")]
@@ -177,3 +172,14 @@
     "rhel-latest.repo already exists"
     (let [_ (make-default-repo-file version :fpath "/tmp/rhel-latest.repo" :clear true)]
       (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d"))))
+
+
+(defn repo-enablement
+  "Enables or disables a given repo file
+
+  *Args*
+  - host: IP address or hostname
+  - repo: path to a repo file
+  - enabled?: if true enable repo, if false, disable repo"
+  [host repo enabled?]
+  ())
