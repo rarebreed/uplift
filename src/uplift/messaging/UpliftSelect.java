@@ -20,9 +20,9 @@ import java.util.Set;
 
 
 public class UpliftSelect {
-    private static String clientChan = "clientChannel";
-    private static String serverChan = "serverChannel";
-    private static String channelType = "channelType";
+    private static final String clientChan = "clientChannel";
+    private static final String serverChan = "serverChannel";
+    private static final String channelType = "channelType";
 
     public static void select(Selector selector) {
         try {
@@ -31,7 +31,6 @@ public class UpliftSelect {
             Iterator<SelectionKey> iter = selectedKeys.iterator();
 
             while (iter.hasNext()) {
-                System.out.println("Handling next event");
                 SelectionKey key = iter.next();
 
                 // Check the selection key, and see if we have either a new connection or
@@ -65,7 +64,7 @@ public class UpliftSelect {
                     System.out.println("Data is available to be read from client");
                     ByteBuffer buffer = ByteBuffer.allocate(20);
                     SocketChannel clientChannel = (SocketChannel) key.channel();
-                    int bytesRead = 0;
+                    int bytesRead;
                     if (key.isReadable()) {
                         // the channel is non blocking so keep it open till the count is >=0
                         if ((bytesRead = clientChannel.read(buffer)) > 0) {

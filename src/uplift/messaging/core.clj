@@ -8,11 +8,14 @@
            (java.util NoSuchElementException))
   (:require [schema.core :as s]
             [uplift.utils.repl-utils :refer [ptable]]
-            [taoensso.timbre :as timbre :refer [log info debug spy]]))
+            [taoensso.timbre :as timbre :refer [log info debug spy]]
+            [clojure.core.async :as async :refer [>! <! >!! <!! go go-loop buffer close! thread
+                                                  alts! alts!! timeout]]))
 
 (def chan-type "channelType")
 (def server-chan "serverChannel")
 (def client-chan "clientChannel")
+
 
 (s/defrecord Server
   [host :- s/Str
@@ -21,6 +24,7 @@
    channel :- ServerSocketChannel
    selector :- Selector
    sel-key])
+
 
 (defn attach-chan
   "Attach SelectorKey to a channel type"
@@ -126,36 +130,40 @@
   (CharBuffer/wrap "Client is connected"))
 
 
-(defn register-client-chan
-  "Registers the client SocketChannel with the Selector and confirms to the client
-  it is connected"
-  [client-channel selector]
-  (info "registering client")
-  (.configureBlocking client-channel false)
-  (let [buff (make-buffer)
-        client-key (.register client-channel selector SelectionKey/OP_READ SelectionKey/OP_WRITE)]
-    (.attach client-key {chan-type client-chan})
-    (pump-buffer client-channel buff)))
+;; FIXME: Not needed until they fix CLJ-1243.  Functionality is in uplift.messaging.UpliftSelector
+(comment
+  (defn register-client-chan
+    "Registers the client SocketChannel with the Selector and confirms to the client
+    it is connected"
+    [client-channel selector]
+    (info "registering client")
+    (.configureBlocking client-channel false)
+    (let [buff (make-buffer)
+          client-key (.register client-channel selector SelectionKey/OP_READ SelectionKey/OP_WRITE)]
+      (.attach client-key {chan-type client-chan})
+      (pump-buffer client-channel buff))))
 
 
-(defn- accept
-  "Called when a new connection has been obtained.
+;; FIXME: Not needed until they fix CLJ-1243.  Functionality is in uplift.messaging.UpliftSelector
+(comment
+  (defn- accept
+    "Called when a new connection has been obtained.
 
-  Gets the ServerSocketChannel from the SelectionKey (key), then accepts the connection.
-  If the accept isn't null, we have the SocketChannel from the client.  It registers the
-  client SocketChannel with the selector"
-  [key selector]
-  (info "accepting incoming connection")
-  (let [server-sock-chan (.channel key)
-        _ (info "retrieved server socket channel from:" key)
-        client-sock-chan (.accept server-sock-chan)]
-    ;; Check if the .accept returns nil, since the ServerSocketChannel was marked non-blocking
-    (when (not (nil? client-sock-chan))
-      (register-client-chan client-sock-chan selector))))
+    Gets the ServerSocketChannel from the SelectionKey (key), then accepts the connection.
+    If the accept isn't null, we have the SocketChannel from the client.  It registers the
+    client SocketChannel with the selector"
+    [key selector]
+    (info "accepting incoming connection")
+    (let [server-sock-chan (.channel key)
+          _ (info "retrieved server socket channel from:" key)
+          client-sock-chan (.accept server-sock-chan)]
+      ;; Check if the .accept returns nil, since the ServerSocketChannel was marked non-blocking
+      (when (not (nil? client-sock-chan))
+        (register-client-chan client-sock-chan selector)))))
 
 
 ;; FIXME: broken due http://dev.clojure.org/jira/browse/CLJ-1243
-;; rewrite this in java
+;; rewrite this in java.  Keep this though if they ever fix CLJ-1243
 (comment
   (defn select
     ""
@@ -201,17 +209,23 @@
     (recur true)))
 
 
-(defn client
+(defrecord UpliftClient
+  [^String host ^Long port ^SocketChannel channel async-chan])
+
+
+(defn make-client
   "Creates a client to a ServerSocketChannel and connects it"
-  [^String host ^long port]
+  [^String host ^Long port]
   (let [chan (SocketChannel/open)
+        achan (async/chan)
         sock-addr (InetSocketAddress. host port)]
     (doto chan
       (.configureBlocking false)
       (.connect sock-addr))
-    chan))
+    (map->UpliftClient {:host host :port port :channel chan :async-channel achan})))
 
 
+;; FIXME: This should be a read-channel method for a CharBuffer (from UBuffer protocol)
 (defn get-chan-data
   [chan buff]
   (let [charset (Charset/defaultCharset)]
@@ -225,31 +239,46 @@
         msg))))
 
 
-(defn client-loop
-  [^SocketChannel chan]
-  (while (not (.finishConnect chan))
-    (println "Waiting to connect..."))
+;; FIXME: this should be write-channel method for a CharBuffer
+(defn send-chan-data
+  [chan buff & {:keys [charset]
+                :or {charset (Charset/defaultCharset)}}]
+  (while (.hasRemaining buff)
+    (info "writing to server")
+    (.write chan (.encode charset buff))))
 
+
+(defn client-loop
+  [client]
   ;; read data from the channel
-  (let [buff (ByteBuffer/allocate 256)]
-    (loop [chan-msg (get-chan-data chan buff)]
+  (let [chan (:channel client)
+        achan (:async-channel client)
+        buff (ByteBuffer/allocate 256)]
+    (while (not (.finishConnect chan))
+      (println "Waiting to connect..."))
+    ;; Read data from async channel.  This will spawn some new threads in a thread pool
+    ;; and if there's no data in achan, it will park.  This code effectively runs in a new pool
+    (go-loop [data (<! achan)]
+             (let [buff (CharBuffer/wrap data)]
+               (send-chan-data chan buff))
+             (recur (<! achan)))
+    (loop [continue? true
+           chan-msg (get-chan-data chan buff)]
       (when (> (count chan-msg) 0)
         (info chan-msg)
-        (let [charset (Charset/defaultCharset)
-              out-buf (CharBuffer/wrap "Hello server")]
-          (while (.hasRemaining out-buf)
-            (info "writing to server")
-            (.write chan (.encode charset out-buf)))))
-      (recur (get-chan-data chan buff)))))
+        (let [out-buf (CharBuffer/wrap "Hello server")]
+          (send-chan-data chan out-buf)))
+      (recur true (get-chan-data chan buff)))))
 
 
 (defn main-
-  "Starts a ServerSocketChannel"
-  [host port]
-  (let [server-sock-chan (make-server-socket-chan host port)
-        {:keys [selector]} server-sock-chan
-        client-chan (client host port)]
-    ;; Start the ServerSocketChannel to listen for incoming data/connections in its own thread
-    (future (serve selector))
-    ;; start the client in the main thread
-    (client-loop client-chan)))
+  ([host port]
+   (let [server (make-server-socket-chan host port)
+         {:keys [selector]} server
+         client (make-client host port)]
+     ;; Start the ServerSocketChannel to listen for incoming data/connections in its own thread
+     {:service     (future (serve selector))
+      :client      client
+      :server      server
+      :client-loop (future (client-loop client))}))
+  ([] (testing "localhost" 13172)))
