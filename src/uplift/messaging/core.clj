@@ -10,7 +10,8 @@
             [uplift.utils.repl-utils :refer [ptable]]
             [taoensso.timbre :as timbre :refer [log info debug spy]]
             [clojure.core.async :as async :refer [>! <! >!! <!! go go-loop buffer close! thread
-                                                  alts! alts!! timeout]]))
+                                                  alts! alts!! timeout]]
+            [clj-uuid :as uuid]))
 
 (def chan-type "channelType")
 (def server-chan "serverChannel")
@@ -92,14 +93,25 @@
 ;; Subscribe         07        4       Sends a subscription request to the server to listen for a topic
 ;;
 (deftype UpliftMessage
-  [opcode                                                   ;; Determines msg type and length
-   source-addr                                              ;; Address of source
+  [^Integer opcode                                          ;; Determines msg type and length
+   ^String source-addr                                      ;; Address of source
    source-id                                                ;; id is the service type (akin to IP port)
-   dest-addr                                                ;; Address of destination
+   ^String dest-addr                                        ;; Address of destination
    dest-id                                                  ;; The id of the destination
    length                                                   ;; number of bytes of params + data
    data                                                     ;; transit data
    ])
+
+
+(defn make-uplift-message
+  "Creates a UpliftMessage"
+  []
+  )
+
+
+(defn convert-to-byte-buffer
+  "Takes a UpliftMessage object, and converts to a ByteBuffer"
+  [])
 
 
 (defprotocol UBuffer
@@ -212,20 +224,32 @@
     (recur true)))
 
 
+;; The UpliftClient is the generator of UpliftMessages.  It will embed in the messages it sends it's address, port,
+;; and ID.  The id is an identifier of what kind of client it is so that the clients it sends messages to
+;; will know what kind of client it is dealing with
 (defrecord UpliftClient
-  [^String host ^Long port ^SocketChannel channel async-chan])
+  [^String host            ;; the IP address or hostname to connect to
+   ^Long port              ;; the port to connect on remote host
+   ^Long id                ;; a UUID for this client (default- created by make-client)
+   ^SocketChannel channel  ;; a SocketChannel object (default- created by make-client)
+   async-chan])            ;; A core.async channel (default- created by make-client)
 
 
 (defn make-client
-  "Creates a client to a ServerSocketChannel and connects it"
+  "Creates a client to a ServerSocketChannel and connects it
+
+  *Args*
+  - host: the ip address or hostname to connect to
+  - port: the port on the remote host to connect to"
   [^String host ^Long port]
   (let [chan (SocketChannel/open)
         achan (async/chan)
-        sock-addr (InetSocketAddress. host port)]
+        sock-addr (InetSocketAddress. host port)
+        uuid- (uuid/v1)]
     (doto chan
       (.configureBlocking false)
       (.connect sock-addr))
-    (map->UpliftClient {:host host :port port :channel chan :async-channel achan})))
+    (map->UpliftClient {:host host :port port :channel chan :async-channel achan :id uuid-})))
 
 
 ;; FIXME: This should be a read-channel method for a CharBuffer (from UBuffer protocol)
@@ -254,7 +278,7 @@
 (defn client-loop
   [client]
   ;; read data from the channel
-  (let [chan (:channel client)
+  (let [^SocketChannel chan (:channel client)
         achan (:async-channel client)
         buff (ByteBuffer/allocate 256)]
     (while (not (.finishConnect chan))
@@ -284,4 +308,4 @@
       :client      client
       :server      server
       :client-loop (future (client-loop client))}))
-  ([] (testing "localhost" 13172)))
+  ([] (main- "localhost" 13172)))

@@ -15,7 +15,8 @@
                  [org.clojure/core.match "0.3.0-alpha4"]
                  [prismatic/schema "1.0.1"]
                  [org.clojure/tools.cli "0.3.3"]
-                 [org.clojure/core.async "0.2.371"]]
+                 [org.clojure/core.async "0.2.371"]
+                 [danlentz/clj-uuid "0.1.6"]]
 
   :java-source-paths ["src"]
   :aot :all
