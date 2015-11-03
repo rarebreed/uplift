@@ -3,18 +3,15 @@
 
 (ns uplift.repos
   (:require [clojure.java.io :as cjio]
-            [uplift.core :as uc]
             [uplift.utils.file-sys :as file-sys]
-            [immuconf.config :as cfg]
             [uplift.config.reader :as ucr]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
 (def latest-rhel7-server-debuginfo "[latest-rhel7-server-debuginfo]")
-(def user-config (let [home (System/getProperty "user.home")
-                       usr-cfg (get (cfg/load "resources/dev.edn") :user-config)]
-                   (str home usr-cfg)))
-(def config (cfg/load "resources/properties.edn" user-config))
+(def devconfig (ucr/get-configuration))
+(def user-config (:user-config devconfig))
+(def config (:config devconfig))
 (def url-format (get config :url-format))
 
 
@@ -181,5 +178,5 @@
   - host: IP address or hostname
   - repo: path to a repo file
   - enabled?: if true enable repo, if false, disable repo"
-  [host repo enabled?]
+  [repo enabled?]
   ())

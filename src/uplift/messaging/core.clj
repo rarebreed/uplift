@@ -4,7 +4,7 @@
            [java.nio.charset Charset]
            [java.net InetSocketAddress StandardSocketOptions]
            [java.util NoSuchElementException]
-           [uplift.messaging UpliftSelect]
+           [uplift.messaging.java UpliftSelect]
            (java.util NoSuchElementException))
   (:require [schema.core :as s]
             [uplift.utils.repl-utils :refer [ptable]]

@@ -100,6 +100,20 @@
     (reduce finalfn {} filtered)))
 
 
+(def yum-script
+  ["import yum"
+   "yb = yum.YumBase()"
+   "print yb.conf.yumvar[\"basearch\"]"])
+
+
+(defn yum-base
+  "Copies python script to remote host and executes it"
+  [host dest]
+  (spit "yum_base.py" (clojure.string/join "\n" yum-script))
+  (file-sys/send-file-to host "yum_base.py")
+  (ssh host "python yum_base.py"))
+
+
 (defn enabled-repos
   [& {:keys [host]}]
   (let [enabled (if host

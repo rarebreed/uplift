@@ -1,10 +1,11 @@
 (ns uplift.utils.file-sys
   (:require [uplift.command :as uc]
             [uplift.utils.algos :refer [varargs]]
-            [taoensso.timbre :as timbre])
+            [taoensso.timbre :as timbre]
+            [clojure.core.match :refer [match]]
+            [clojure.java.io :as cji])
   (:import [java.nio.file Files Paths]
-           [java.io File])
-  )
+           [java.io File]))
 
 
 (defn directory-seq
@@ -55,11 +56,13 @@
 
 (defn get-remote-file
   "Gets a remote file"
-  [host src & {:keys [user dest]
-               :or {user "root" dest "."}}]
+  [host src & {:keys [user dest clean?]
+               :or {user "root" dest "." clean? true}}]
   (let [temp "scp %s@%s:%s %s"
-        cmd (format temp user host src dest)]
-    (uc/run cmd)))
+        cmd (format temp user host src dest)
+        result (uc/run cmd)
+        ]
+    result))
 
 
 (defn send-file-to
@@ -68,3 +71,68 @@
   (let [temp "scp %s %s@%s:%s"
         cmd (format temp src user host dest)]
     (uc/run cmd)))
+
+
+(defn leading-slash?
+  "Tests if a string has a leading slash"
+  [path]
+  (= \/ (first path)))
+
+
+(defn trailing-slash?
+  "Tests if a path has a trailing slash"
+  [path]
+  (= \/ (last path)))
+
+
+(defn add-trailing-slash
+  "Adds a trailing slash to a path"
+  [path]
+  (str path "/"))
+
+
+(defn remove-slash
+  "Removes trailing and/or leading slashes from a string
+
+  *Args*
+  - path: string to remove slashes
+  - leading?: if true, removes leading slash (if it exists)
+  - trailing?: if true, removes trailing slash"
+  [path & {:keys [leading? trailing?]
+           :or {leading? true trailing? true}}]
+  (letfn [(rm-first [x] (apply str (drop-while (fn [c] (= c \/)) x)))
+          (rm-last [x] (apply str (take-while (fn [c] (not= c \/)) x)))
+          (rm-both [x] ((comp rm-last rm-first) x))]
+    (match [(first path) (last path) leading? trailing?]
+           [\/ \/ true true] (rm-both path)
+           [\/ \/ true false] (rm-first path)
+           [\/ \/ false true] (rm-last path)
+           [\/ \/ false false] path
+           [\/ _ true _] (rm-first path)
+           [\/ _ false _] path
+           [_ \/ _ true] (rm-last path)
+           [_ \/ _ false] path)))
+
+
+(defn path-join
+  "Given a sequence of strings, join them together to form a path
+
+  The first element is the parent path, and may include a leading slash.  This indicates that it is an absolute
+  path.  If it does not start with a leading slash, then the path is considered relative to the working directory
+  If any other element has a preceding or trailing slash it will be removed from the path.
+  "
+  [& paths]
+  (let [parent (first paths)
+        parent (if (trailing-slash? parent)
+                 (apply str (butlast parent))
+                 parent)
+        tail (for [p (rest paths)]
+               (remove-slash p))
+        mkpath (partial cji/file parent)]
+    (-> (apply mkpath tail) .getPath)))
+
+
+(defn str->File
+  "Converts a string to a File"
+  [path]
+  (File. path))

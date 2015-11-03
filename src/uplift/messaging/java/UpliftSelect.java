@@ -3,7 +3,7 @@
  * Creating a class here that does the functionality needed to
  */
 
-package uplift.messaging;
+package uplift.messaging.java;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
