@@ -107,11 +107,15 @@
            [\/ \/ true true] (rm-both path)
            [\/ \/ true false] (rm-first path)
            [\/ \/ false true] (rm-last path)
-           [\/ \/ false false] path
            [\/ _ true _] (rm-first path)
-           [\/ _ false _] path
            [_ \/ _ true] (rm-last path)
-           [_ \/ _ false] path)))
+           :else path)))
+
+
+(defn remove-all-slash
+  "Removes all slashes including in the middle"
+  [path]
+  (->> (clojure.string/split path #"/") (clojure.string/join "")))
 
 
 (defn path-join
@@ -136,3 +140,26 @@
   "Converts a string to a File"
   [path]
   (File. path))
+
+
+(defn make-path
+  [path]
+  (Paths/get path (into-array String [])))
+
+
+(defn path-info
+  "Gets commonly used info for a path given as a string"
+  [path]
+  (let [p (make-path path)
+        f (.toFile p)]
+    {:file? (.isFile f)
+     :dir? (.isDirectory f)
+     :exists? (.exists f)
+     :parent (.getParent p)
+     :filename (.getFileName p)}))
+
+
+(defn path->file
+  ""
+  [path]
+  (last (clojure.string/split path #"/")))
