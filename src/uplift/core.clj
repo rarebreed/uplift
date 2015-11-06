@@ -72,32 +72,37 @@
 ;; Ughhh, Java doesn't have a good way to get distro information.  So
 ;; we will scrape it from /etc/os-release
 (defn distro-info
-  "Scrapes the /etc/*release file to return:
+  "Takes the contents of the /etc/*release file to return:
    {:NAME name of the distro (eg Fedora or RHEL)
     :VERSION_ID version number (eg 22 or 7.2
     :VARIANT_ID type of OS (eg workstation or server)}"
-  [& relfile]
-  (let [rfile (if relfile relfile "/etc/os-release")
-        info (:out @(run (str "cat " rfile)))
-        pattern "^%s=\\s*(.*)$"
-        ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
-        parsers (for [x ["NAME" "VERSION_ID" "VARIANT_ID"]]
-                  {(keyword x) (re-pattern (format pattern x))})
-        ;; Run each regex on each line, return ([:NAME match?])
-        matches (for [parser parsers
-                      line (clojure.string/split info #"\n")]
-                  (let [keyname (first (keys parser))
-                        val (first (vals parser))
-                        _ (println "Testing: " line " with " val)]
-                    [keyname (re-find val line)]))
-        ;; Only get the elements in the seq where the second element isn't nil
-        filtered (filter (fn [%] (if (second %) true nil)) matches)
-        ;; passed to reduce to return our final map
-        finalfn (fn [coll entry]
-                  (merge coll (let [f (first entry)
-                                    [whole value] (second entry)]
-                                (hash-map f value))))]
-    (reduce finalfn {} filtered)))
+  ([info]
+   (let [pattern "^%s=\\s*(.*)$"
+         ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
+         parsers (for [x ["NAME" "VERSION_ID" "VARIANT_ID"]]
+                   {(keyword x) (re-pattern (format pattern x))})
+         ;; Run each regex on each line, return ([:NAME match?])
+         matches (for [parser parsers
+                       line (clojure.string/split info #"\n")]
+                   (let [keyname (first (keys parser))
+                         val (first (vals parser))
+                         _ (timbre/debug "Testing: " line " with " val)]
+                     [keyname (re-find val line)]))
+         ;; Only get the elements in the seq where the second element isn't nil
+         filtered (filter (fn [%] (if (second %) true nil)) matches)
+         ;; passed to reduce to return our final map
+         finalfn (fn [coll entry]
+                   (merge coll (let [f (first entry)
+                                     [whole value] (second entry)]
+                                 (hash-map f value))))]
+     (reduce finalfn {} filtered)))
+  ([]
+    (distro-info (slurp "/etc/os-release"))))
+
+
+(defn remote-distro-info
+  [host]
+  (let [rfile (cmdr/call (cmdr/->SSHCommander host "cat /etc/os-release"))]))
 
 
 (def yum-script
