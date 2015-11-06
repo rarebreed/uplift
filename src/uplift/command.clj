@@ -213,19 +213,23 @@
     (println "connected? " (.isConnected chan))
     (loop [status (is-alive-ssh chan)]
       (if status
+        ;; While the channel is still open, read the stdout that was piped to the InputStream
         (let [line (.readLine os)]
           (println line)
           (when logged
             (.append logged (str line "\n")))
           (recur (is-alive-ssh chan)))
+        ;; There might be info in the BufferedReader once the channel closes, so read it
         (do
+          (while (.ready os)
+            (println (.readLine os)))
           (println "Finished with status: " (.getExitStatus chan))
           ssh-res)))))
 
 
 (defn runner [host cmd]
   (let [ssh-res (ssh host cmd :out :stream)]
-    (future (get-ssh-output ssh-res is-alive-ssh))))
+    (future (get-ssh-output ssh-res))))
 
 
 (defrecord SSHCommander
@@ -236,3 +240,26 @@
   Executor
   (call [this]
     (runner (:host this) (:cmd this))))
+
+
+(defn reducer [m]
+  "flattens a map (one-level) by turning it into a sequence of (k1 v1 k2 v2 ..)"
+  (reduce #(concat %1 %2) []
+          (for [[k v] m]
+            [k v])))
+
+(defn launch+
+  "Improved way to launch a command"
+  [cmd & {:keys [host]
+          :as opts}]
+  (let [command (if host
+                  (->SSHCommander host cmd)
+                  (apply make-commander cmd (reducer opts)))]
+    (call command)))
+
+
+(defn get-results
+  "Determine if a process is done, and if so, extract the exit status
+  "
+  [process]
+  (let [done (realized? process)]))
