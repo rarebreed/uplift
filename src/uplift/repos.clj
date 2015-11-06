@@ -4,7 +4,8 @@
 (ns uplift.repos
   (:require [clojure.java.io :as cjio]
             [uplift.utils.file-sys :as file-sys]
-            [uplift.config.reader :as ucr]))
+            [uplift.config.reader :as ucr]
+            [uplift.config :as ucfg]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
@@ -61,7 +62,8 @@
     (format url-fmt type version flavor arch repod)))
 
 
-(defn make-base-server
+(defn make-yum-repo
+  "Creates a YumRepo record which can be used to create a repo file"
   [rtype version repo & {:keys [url url-fmt flavor arch enabled gpgcheck description debug]
                          :as opts
                          :or {url nil
@@ -92,17 +94,17 @@
 (defn latest-rel-eng-server
   "Convenience function to make latest repo"
   [version]
-  (make-base-server :rel-eng version latest-rhel7-server))
+  (make-yum-repo :rel-eng version latest-rhel7-server))
 
 
 (defn latest-released-server
   [version]
-  (make-base-server :released version latest-rhel7-server))
+  (make-yum-repo :released version latest-rhel7-server))
 
 
 (defn latest-nightly-server
   [version]
-  (make-base-server :nightly version latest-rhel7-server))
+  (make-yum-repo :nightly version latest-rhel7-server))
 
 
 (defn make-default-repo-file
@@ -113,8 +115,8 @@
   (if (file-sys/repo-file-exists? :repo-file fpath)
     "rhel-latest.repo already exists"
     (let [latest (latest-rel-eng-server version)
-          latest-optional (make-base-server :rel-eng version latest-rhel7-server-optional :flavor "Server-optional")
-          latest-debuginfo (make-base-server :rel-eng version latest-rhel7-server-debuginfo :enabled 0 :debug true)]
+          latest-optional (make-yum-repo :rel-eng version latest-rhel7-server-optional :flavor "Server-optional")
+          latest-debuginfo (make-yum-repo :rel-eng version latest-rhel7-server-debuginfo :enabled 0 :debug true)]
       (write-to-config latest fpath)
       (write-to-config latest-optional fpath)
       (write-to-config latest-debuginfo fpath)))
@@ -171,12 +173,46 @@
       (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d"))))
 
 
+(defn validate-enabled
+  [new-repo section]
+  (let [cmap (ucfg/get-conf-file new-repo)
+        matches (ucfg/get-conf-key cmap "enabled" section)
+        ;; filter only matches where there are no comments as there should only be one
+        filtered (filter (fn [entry]
+                           (let [[index repo-section] entry]
+                             (and (= "enabled" (:key repo-section))
+                                  (nil? (:comment repo-section)))))
+                         matches)]
+    (if (not= (count filtered) 1)
+      false
+      (= "0" (-> (first filtered) second (:value))))))
+
+
 (defn repo-enablement
   "Enables or disables a given repo file
 
   *Args*
   - host: IP address or hostname
   - repo: path to a repo file
-  - enabled?: if true enable repo, if false, disable repo"
-  [repo enabled?]
-  ())
+  - enabled?: if true enable repo, if false, disable repo
+  - dest-path: path where new file will be written (defaults to same as repo)"
+  [repo section key value & {:keys [dest-path host]}]
+  (let [repo (if host
+               (file-sys/get-remote-file host repo)
+               repo)
+        dest-path (if dest-path dest-path repo)
+        cmap (ucfg/set-conf-file repo key value :section section)
+        edited-repo (ucfg/vec-to-file cmap dest-path)]
+    (if host
+      (file-sys/send-file-to repo dest-path)
+      edited-repo)))
+
+
+(defn repo-enable
+  [repo section enabled? & args]
+  (repo-enablement repo section "enabled" (if enabled? "1" "0")) args)
+
+
+(defn gpgcheck-enable
+  [repo section enabled? & args]
+  (repo-enablement repo section "gpgcheck" (if enabled? "1" "0")) args)
