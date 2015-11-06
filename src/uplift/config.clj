@@ -150,11 +150,10 @@
   - section: section the key must belong to
   - delimeter: tje separator between key and value
   - newfile: path to where modified file will be written"
-  [file key value & {:keys [uncomment? section delimeter newfile]
+  [file key value & {:keys [uncomment? section delimeter]
                      :or   {uncomment? true
                             section    "DEFAULT"
-                            delimeter  "="
-                            newfile    (str file ".new")}}]
+                            delimeter  "="}}]
   (let [vmap (get-conf-file file)                              ;; vector of entries from conf file
         found (validate-entries (get-conf-key vmap key section)) ;; indexed vec of vec of matches on key/section
         uncommented (first (get-uncommented-entry found))
