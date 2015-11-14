@@ -44,47 +44,35 @@
                             (sshs/ssh session {:in cmd})))))
 
 
-(defn run
-  "Uses a ProcessBuilder to execute a command locally"
-  [cmd & opts]
-  (let [cmd-s (clojure.string/split cmd #" ")
-        run (partial exec/sh cmd-s)
-        result @(if opts
-                  (run (first opts))
-                  (run))]
-    (assoc result :cmd (->> cmd-s (interpose " ") (apply str)))))
-
-
-(defn execute
-  [cmd & {:keys [host]}]
-  (if host
-    (ssh host cmd)
-    (run cmd)))
-
-
-(defn which
-  "Determines if a program is in PATH and if so, returns the path if it exists or nil"
-  [program & {:keys [host]}]
-  (let [result (execute (str "which " program) :host host)]
-    (if (= 0 (:exit result))
-      (clojure.string/trim (:out result))
-      nil)))
-
-
+;; ==========================================================================================
+;; The Executor Protocol
+;; This represents how to execute a command either locally or remotely.  Remote calls could be
+;; done via SSH, uplift.messaging, or even (potentially) a REST call
+;; ==========================================================================================
 (defprotocol Executor
   "Any object that supports execution of a system command should implement this"
-  (call [this]))
-
-
-;; make sure we add ssh-add
-(defn ssh-add
-  []
-  (run "ssh-add"))
+  (call [this] "Execute the process")
+  (output [this] "Get saved output of the process"))
 
 ;; ==========================================================================================
-;; log producer and consumer
+;; Process
+;; Where Executor encapsulates behavior of how to execute a process, Process describes what
+;; can be done with the unit of work
 ;; ==========================================================================================
+(defprotocol Worker
+  "API for a unit of work"
+  (alive? [this] "Is the unit of work still in progress (get it's state)")
+  (get-output [this {:keys [logged]}] "Get information from the process in real-time")
+  ;(get-error [this] "Get any error information from the process")
+  (get-status [this] "The status of a process"))
 
+
+;; ==========================================================================================
+;; LogProducer
+;; A LogProducer is a process that emits data of some kind and puts it into a channel.  This
+;; can be used by Process types in that they will likely be producing information of interest
+;; to other Processes
+;; ==========================================================================================
 (defrecord LogProducer
   [;; core.async channel to put lines into
    log-channel
@@ -92,9 +80,43 @@
    transformer
    ])
 
-
+;; ==========================================================================================
+;; LogConsumer
+;; A LogConsumer is a process which takes data out of a channel and does something with it
+;; a Process which needs to examine log information or events should probably use this
+;; ==========================================================================================
 (defrecord LogConsumer
   [log-channel])
+
+;; ==========================================================================================
+;;
+;; ==========================================================================================
+(extend-type java.lang.Process
+  Worker
+
+  (alive? [this]
+    (.isAlive this))
+
+  (get-output
+    [proc {:keys [logged]}]
+    (let [inp (-> (.getInputStream proc) InputStreamReader. BufferedReader.)]
+      (loop [line (.readLine inp)
+             running? (alive? proc)]
+        ;; FIXME: abstract the println.  What if user doesn't want to print stdout or wants it to
+        ;; to go to a network channel or to a core.async channel?
+        (println line)
+        (cond line (do
+                     (when logged
+                       (.append logged (str line "\n")))
+                     (recur (.readLine inp) (alive? proc)))
+              (not running?) proc
+              :else (do
+                      (timbre/warn "unknown condition in get-output")
+                      proc)))))
+  (get-status [this]
+
+    (.exitValue this)))
+
 
 ;; ==========================================================================================
 ;; reimplementation of the teleproc project in clojure
@@ -118,47 +140,11 @@
   (.redirectErrorStream pb combine?)
   pb)
 
-;; TODO: ughhh, make this a protocol function on Executor
-(defn is-alive-process
-  [obj]
-  (.isAlive obj))
 
-(defn is-alive-ssh
-  [obj]
-  (= (.getExitStatus obj) -1))
-
-;; TODO: hook the stdout into a network channel
-(defn get-output
-  [proc & {:keys [logged]}]
-  (let [inp (-> (.getInputStream proc) InputStreamReader. BufferedReader.)]
-    (loop [line (.readLine inp)
-           alive? (is-alive-process proc)]
-      (println line)
-      (cond line (do
-                   (when logged
-                     (.append logged (str line "\n")))
-                   (recur (.readLine inp) (is-alive-process proc)))
-            (not alive?) proc))))
-
-
-(defn launch
-  "Launches a subprocess
-
-  If input, output or error are non-nil, creates a Redirector"
-  [cmdr]
-  (let [pb (ProcessBuilder. (:cmd cmdr))
-        build (comp #(combine-err! % (:combine-err? cmdr))
-                    #(set-env! % (:env cmdr))
-                    set-dir!)
-        _ (build pb (:work-dir cmdr))
-        proc (.start pb)]
-    (if (:block? cmdr)
-      (do
-        (get-output proc :logged (:logged! cmdr))
-        proc)
-      (future (get-output proc :logged (:logged! cmdr))))))
-
-
+;; ==========================================================================================
+;; Commander
+;; Represents how to call a local subprocess
+;; ==========================================================================================
 (defrecord Commander
   [cmd                                                      ;; vector of String
    ^File work-dir                                           ;; working directory
@@ -174,16 +160,31 @@
    watch-handler                                            ;; function launched in a separate thread
    ]
   Executor
+
   (call [cmdr]
-    (launch cmdr)))
+    (let [pb (ProcessBuilder. (:cmd cmdr))
+          build (comp #(combine-err! % (:combine-err? cmdr))
+                      #(set-env! % (:env cmdr))
+                      set-dir!)
+          _ (build pb (:work-dir cmdr))
+          logger (:logged! cmdr)
+          proc (.start pb)]
+      (if (:block? cmdr)
+        (do
+          (get-output proc {:logged logger})
+          proc)
+        (future (get-output proc {:logged logger})))))
+
+  (output [cmdr]
+    (.toString (:logged! cmdr))))
 
 
-(defn make-commander
+(defn make->commander
   "Creates a Commander object"
   [cmd & {:keys [work-dir env input output error combine-err? block? logged! close result-handler watch-handler]
           :or   {combine-err?   true
                  block?         true
-                 logged!        (StringBuilder.)
+                 logged!        (StringBuilder. 1024)
                  close          {:in false :out false :err false}
                  result-handler (fn [res]
                                   (= 0 (:out res)))}
@@ -200,46 +201,76 @@
                                :result-handler result-handler})))
 
 
-(defn get-ssh-output
-  "Reader for jsch Channel
+(defrecord SSHProcess
+  [channel
+   out-stream
+   err-stream
+   session]
+  Worker
 
-  *args*
-  ssh-res: "
-  [ssh-res & {:keys [logged]}]
-  (let [chan (:channel ssh-res)
-        os (-> (.getInputStream chan) InputStreamReader. BufferedReader.)]
-    (if (not (.isConnected chan))
-      (.connect chan))
-    (println "connected? " (.isConnected chan))
-    (loop [status (is-alive-ssh chan)]
-      (if status
-        ;; While the channel is still open, read the stdout that was piped to the InputStream
-        (let [line (.readLine os)]
-          (println line)
-          (when logged
-            (.append logged (str line "\n")))
-          (recur (is-alive-ssh chan)))
-        ;; There might be info in the BufferedReader once the channel closes, so read it
-        (do
-          (while (.ready os)
-            (println (.readLine os)))
-          (println "Finished with status: " (.getExitStatus chan))
-          ssh-res)))))
+  (alive? [this]
+    (let [chan (:channel this)]
+      (= (.getExitStatus chan) -1)))
+
+  (get-output [this {:keys [logged]}]
+    (let [chan (:channel this)
+          os (-> (.getInputStream chan) InputStreamReader. BufferedReader.)]
+      (if (not (.isConnected chan))
+        (.connect chan))
+      (println "connected? " (.isConnected chan))
+      (loop [status (alive? this)]
+        (if status
+          ;; While the channel is still open, read the stdout that was piped to the InputStream
+          (let [line (.readLine os)]
+            (println line)
+            (when logged
+              (.append logged (str line "\n")))
+            (recur (alive? this)))
+          ;; There might be info in the BufferedReader once the channel closes, so read it
+          (do
+            (while (.ready os)
+              (let [line (.readLine os)]
+                (println line)
+                (.append logged (str line "\n"))))
+            (println "Finished with status: " (.getExitStatus chan))
+            this)))))
+
+  (get-status [this]
+    (let [chan (:channel this)]
+      (.getExitStatus chan))))
 
 
-(defn runner [host cmd]
-  (let [ssh-res (ssh host cmd :out :stream)]
-    (future (get-ssh-output ssh-res))))
+(defn make->SSHProcess
+  [ssh-res]
+  (map->SSHProcess ssh-res))
 
 
 (defrecord SSHCommander
   [^String host
    ^String cmd
+   ^StringBuilder logged!
+   result-handler
+   watch-handler
    ;; TODO: what else do we need?
    ]
   Executor
   (call [this]
-    (runner (:host this) (:cmd this))))
+    (let [host (:host this)
+          cmd (:cmd this)
+          logger (:logged! this)
+          ssh-res (make->SSHProcess (ssh host cmd :out :stream))]
+      (future (get-output ssh-res {:logged logger}))))
+  (output [this]
+    (.toString (:logged! this))))
+
+
+(defn make->sshcommander
+  [host cmd & {:keys [logger result-handler watch-handler]
+               :or {logger (StringBuilder. 1024)}
+               :as opts}]
+  (let [m {:host host :cmd cmd :logger logger :result-handler result-handler :watch-handler watch-handler}]
+    (println m)
+    (map->SSHCommander m)))
 
 
 (defn reducer [m]
@@ -248,18 +279,24 @@
           (for [[k v] m]
             [k v])))
 
-(defn launch+
+(defn launch
   "Improved way to launch a command"
   [cmd & {:keys [host]
           :as opts}]
   (let [command (if host
-                  (->SSHCommander host cmd)
-                  (apply make-commander cmd (reducer opts)))]
-    (call command)))
+                  (make->sshcommander host cmd)
+                  (apply make->commander cmd (reducer opts)))]
+    [command (call command)]))
 
 
-(defn get-results
-  "Determine if a process is done, and if so, extract the exit status
-  "
-  [process]
-  (let [done (realized? process)]))
+;; TODO: use the Executor protocol
+(defn ^{:deprecated true} which
+  "Determines if a program is in PATH and if so, returns the path if it exists or nil"
+  [program & {:keys [host]}]
+  (let [[cmd proc] (launch (str "which " program) :host host)
+        proc (if (future? proc) @proc proc)]
+    (if (= 0 (get-status proc))
+      (clojure.string/trim (output cmd))
+      nil)))
+
+;(launch+ "ssh-add")
