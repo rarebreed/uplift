@@ -23,6 +23,11 @@ public class UpliftSelect {
     private static final String clientChan = "clientChannel";
     private static final String serverChan = "serverChannel";
     private static final String channelType = "channelType";
+    private static Map<Long, SocketChannel> connectedClients = new HashMap<>();
+
+    public static void decode(ByteBuffer buff) {
+
+    }
 
     public static void select(Selector selector) {
         try {
@@ -60,6 +65,12 @@ public class UpliftSelect {
                         }
                     }
                 }
+                /**
+                 * In this case we have data to read from a client.  All messages are UpliftMessage types
+                 * and therefore we need to decode it.  First, we need to decode what the opcode is.  Then
+                 * we need to know the source and destination ID (who sent this message and from where, and
+                 * where is this message going and to whom?).
+                 */
                 else {
                     System.out.println("Data is available to be read from client");
                     ByteBuffer buffer = ByteBuffer.allocate(20);

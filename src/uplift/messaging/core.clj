@@ -232,7 +232,7 @@
    ^Long port              ;; the port to connect on remote host
    ^Long id                ;; a UUID for this client (default- created by make-client)
    ^SocketChannel channel  ;; a SocketChannel object (default- created by make-client)
-   async-chan])            ;; A core.async channel (default- created by make-client)
+   async-channel])            ;; A core.async channel (default- created by make-client)
 
 
 (defn make-client
