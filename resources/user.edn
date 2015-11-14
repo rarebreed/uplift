@@ -3,5 +3,9 @@
  :ssh-pub-key #immuconf/overrid ""                          ;; path to master ssh public key
  :ssh-pub-key-auto #immuconf/override ""                    ;; path to automation ssh public key
  :ddns-client #immuconf/override ""
- :candlepin #immuconf/override ""                           ;; URL for candlepin
+ :candlepin #immuconf/override {:url ""                     ;; url for candlepin
+                                :user ""                    ;; username (basic-auth)
+                                :password ""                ;; password for user (basic auth)
+                                :admin ["" "" ""]
+                                :owner ""}                  ;; owner key
  }
