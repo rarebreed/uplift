@@ -73,7 +73,6 @@
                               enabled "1"
                               gpgcheck "0"
                               debug false}}]
-  (println "in make-base-server")
   (doseq [[k v] opts]
     (println k "=" v))
   (let [url (if url
@@ -90,7 +89,8 @@
         map->YumRepo)))
 
 
-;; TODO Make a macro to autogenerate 
+;; TODO Make a macro to autogenerate
+;; FIXME: what about rhel 6.8?
 (defn latest-rel-eng-server
   "Convenience function to make latest repo"
   [version]

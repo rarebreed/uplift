@@ -57,3 +57,8 @@
   "A reverse comp that works from left to right"
   [& fns]
   (apply comp (reverse fns)))
+
+(def keywordize (comp
+                  keyword
+                  #(clojure.string/replace % #"\s+" "-")
+                  clojure.string/lower-case))

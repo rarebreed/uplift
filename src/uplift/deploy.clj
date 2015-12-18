@@ -30,7 +30,7 @@
             [taoensso.timbre :as timbre]
             [uplift.core :as core]
             [uplift.core :as uc]
-            [uplift.command :refer [run ssh which]]
+            [commando.command :refer [launch ssh which]]
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.repos :as ur]
@@ -126,6 +126,7 @@
   ;(run "ssh-add")
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
         copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
+        ;; FIXME: a default repo makes no sense when you are building from nightlies
         repo-install-res (ur/install-repos host version)
         [_ major minor] (uc/check-java :host host)
         install-jdk-res (cond

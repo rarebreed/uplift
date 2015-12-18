@@ -1,6 +1,7 @@
 (ns uplift.utils.repl-utils
   (:require [clojure.reflect :as cr]
-            [clojure.pprint :as cpp]))
+            [clojure.pprint :as cpp]
+            [clojure.repl :refer [source-fn]]))
 
 (comment
   (do

@@ -1,10 +1,11 @@
 ;; Mostly contains screen scraping functions for the CLI
 
 (ns uplift.rhsm.cli
-  (:require [uplift.command :as cmdr]))
+  (:require [commando.command :as cmdr]
+            [commando.protos.protos :refer [output]]))
 
 (defn- sm-list-consumed-
   "Retrieves all"
   [host]
-  (let [[cmd result] (cmdr/launch "subscription-manager list --consumed" :host host)
-        ]))
+  (let [result (cmdr/launch "subscription-manager list --consumed" :host host)]
+    (:output result)))
