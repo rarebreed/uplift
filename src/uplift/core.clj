@@ -1,9 +1,11 @@
 (ns uplift.core
   (:require [taoensso.timbre :as timbre]
-            [uplift.command :as cmdr :refer [run ssh execute which]]
+            [commando.command :as cmdr :refer [launch ssh which]]
+            [commando.protos.protos :as protos :refer [output]]
             [uplift.utils.file-sys :as file-sys]
-            [uplift.utils.algos :refer [lmap items varargs]]
+            [uplift.utils.algos :refer [lmap items varargs keywordize]]
             [uplift.config.reader :as ucr]
+            [cheshire.core :as ches]
             clojure.string)
   (:import [java.nio.file Paths]
            [java.io File]
@@ -26,20 +28,16 @@
    ]
   )
 
-
 (defn set-hostname
   [name]
   (reset! ddnsname name))
-
 
 (defn set-ddnshash
   [hash]
   (reset! ddnshash hash))
 
-
 (defn set-env
   [])
-
 
 (defn copy-ssh-key
   "Copies the ssh public key to remote host.  Uses sshpass to get around prompting for password
@@ -53,16 +51,17 @@
   [^String host & {:keys [username key-path]
                    :or {username "root"
                         key-path (get-in config [:config :ssh-pub-key])}}]
-  {:pre  [#(not (nil? (get-in config [:config :ssh-password])))
+  {:pre  [#(not (nil? (which "ssh-pass")))
+          #(not (nil? (get-in config [:config :ssh-password])))
           #(file-sys/file-exists? key-path)]
    :post [#(= 0 (:exit %)) #(= 0 (-> (ssh host "ls") :exit))]}
   (let [deps (which "sshpass")
         sshpass-fmt "sshpass -e ssh-copy-id -i %s -o StrictHostKeyChecking=no %s@%s"
         base (format sshpass-fmt key-path username host)
-        env {:env {"SSHPASS" (get-in config [:config :ssh-password])}}
-        call (delay (run base env))]
+        env {"SSHPASS" (get-in config [:config :ssh-password])}
+        call (delay (launch base :env env))]
     (if (nil? deps)
-      (let [sshpass (run "yum install -y sshpass")]
+      (let [sshpass (launch "yum install -y sshpass")]
         (if (not= 0 (:exit sshpass))
           (throw (Exception. "Unable to install sshpass to copy ssh public key"))
           (force call)))
@@ -72,15 +71,16 @@
 ;; Ughhh, Java doesn't have a good way to get distro information.  So
 ;; we will scrape it from /etc/os-release
 (defn distro-info
-  "Takes the contents of the /etc/*release file to return:
-   {:NAME name of the distro (eg Fedora or RHEL)
-    :VERSION_ID version number (eg 22 or 7.2
-    :VARIANT_ID type of OS (eg workstation or server)}"
+  "Runs lsb_release -a and gets the name, version, and variant type:
+   {:distributor-id name of the distro (eg Fedora or RHEL)
+    :release version number (eg 22 or 7.2
+    :variant type of OS (eg workstation or server)}"
   ([info]
-   (let [pattern "^%s=\\s*(.*)$"
+   (let [pattern "^%s:\\s*(.*)$"
+         variant-patt #"\w+(Server|Client|Workstation)\w*"
          ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
-         parsers (for [x ["NAME" "VERSION_ID" "VARIANT_ID"]]
-                   {(keyword x) (re-pattern (format pattern x))})
+         parsers (for [x ["Distributor ID" "Release"]]
+                   {(keywordize x) (re-pattern (format pattern x))})
          ;; Run each regex on each line, return ([:NAME match?])
          matches (for [parser parsers
                        line (clojure.string/split info #"\n")]
@@ -94,42 +94,50 @@
          finalfn (fn [coll entry]
                    (merge coll (let [f (first entry)
                                      [whole value] (second entry)]
-                                 (hash-map f value))))]
-     (reduce finalfn {} filtered)))
+                                 (hash-map f value))))
+         m (reduce finalfn {} filtered)
+         variant (second (re-find variant-patt (:distributor-id m)))]
+     (assoc m :variant variant)))
   ([]
-    (distro-info (slurp "/etc/os-release"))))
+   (let [res (launch "lsb_release -a")
+         output (:output res)]
+     (distro-info output))))
 
 
 (defn remote-distro-info
   [host]
-  (let [rfile (cmdr/call (cmdr/->SSHCommander host "cat /etc/os-release"))]))
+  (let [rfile (launch "lsb_release -a" :host host :throws? true)]
+    (distro-info (:output rfile))))
 
 
 (def yum-script
   ["import yum"
+   "import json"
    "yb = yum.YumBase()"
-   "print yb.conf.yumvar[\"basearch\"]"])
+   "yb_s = json.dumps(yb.conf.yumvar)"
+   "print yb_s"])
 
 
 (defn yum-base
   "Copies python script to remote host and executes it"
-  [host dest]
+  [host]
   (spit "yum_base.py" (clojure.string/join "\n" yum-script))
   (file-sys/send-file-to host "yum_base.py")
-  (ssh host "python yum_base.py"))
+  (let [result (launch "python yum_base.py" :host host)
+        output (second (clojure.string/split (:output result) #"\n"))
+        yum (ches/parse-string output)]
+    yum))
 
 
 (defn enabled-repos
   [& {:keys [host]}]
-  (let [enabled (if host
-                  (ssh host "yum repolist enabled")
-                  (run "yum repolist enabled"))]
+  (let [enabled (launch "yum repolist enabled" :host host)]
     enabled))
 
 ;; Add a pre hook to verify that repo file has been installed
 (defn install-devtools
   [host]
-  (ssh host "yum groupinstall -y \"Development Tools\""))
+  (launch "yum groupinstall -y \"Development Tools\"" :host host))
 
 
 (defn git-clone
@@ -139,7 +147,7 @@
                (let [udir (get-in (ucr/get-configuration) [:config :uplift-dir])]
                  (.getParent (File. udir))))
         dir (if dir dir udir)]
-    (ssh host (format "cd %s; git clone %s" dir url))))
+    (launch (format "cd %s; git clone %s" dir url) :host host)))
 
 
 ;; TODO:  Test this
@@ -147,8 +155,8 @@
   [repo]
   (let [f (-> (Paths/get repo (into-array String [])) .toFile)
         localfn #(for [cmd ["git clean -dxf" "git pull"]]
-                  (run cmd {:dir %}))
-        remotefn #(run (str "git clone " %))]
+                  (launch cmd {:dir %}))
+        remotefn #(launch (str "git clone " %))]
     (if (.isDirectory f)
       (localfn repo)
       (remotefn repo))))
@@ -168,7 +176,7 @@
   ;; This assumes we have openjdk in our repos
   (let [jdks (map #(format % version) ["java-1.%d.0-openjdk-devel"
                                        "java-1.%d.0-openjdk"])
-        install (map #(ssh host (str "yum install -y " %)) jdks)]
+        install (map #(launch (str "yum install -y " %) :host host) jdks)]
     install))
 
 
@@ -176,7 +184,7 @@
   "ssh'es into remote host and curl the file to dest path on remote host"
   [host url dest]
   (let [cmd (format "curl %s -o %s" url dest)]
-    (ssh host cmd)))
+    (launch cmd :host host)))
 
 
 (defmacro wrap
@@ -210,11 +218,9 @@
 (defn check-java
   "Returns"
   [& {:keys [host]}]
-  (let [version (if host
-                  (ssh host "java -version")
-                  (run "java -version"))
-        outp (:err version)]
-    (if (not= 0 (:exit version))
+  (let [version (launch "java -version" :host host)
+        outp (:output version)]
+    (if (not= 0 (:status version))
       ["No java installed" "0" "0"]
       (first (re-seq #"\d\.(\d)\.\d_(\d{2})" outp)))))
 
@@ -233,11 +239,11 @@
 (defn install-lein
   "Installs leiningen on the remote host and puts it in /usr/local/bin"
   [host dest]
-  {:post [(check-results %)]}
+  ;{:post [(check-results %)]}
   (let [lein-url "https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein"
         edit (fn []
                (let [bashrc (file-sys/get-remote-file host "~/.bashrc")
-                     contents (when (= 0 (:exit bashrc))
+                     contents (when (= 0 (:status bashrc))
                                 (slurp ".bashrc"))
                      edited (if contents
                               (str contents "\nexport LEIN_ROOT=1\n")
@@ -246,9 +252,9 @@
                  (file-sys/send-file-to host "/tmp/.bashrc" :dest "~/.bashrc")))
         results (try+
                   (remote-download host lein-url dest)
-                  (ssh host (format "chmod ug+x %s" dest))
+                  (launch (format "chmod ug+x %s" dest) :host host)
                   (edit)
-                  (ssh host "'lein'"))
+                  (launch "lein" :host host :env {"LEIN_ROOT" "1"}))
         final {:results results :exceptions? (some #(instance? Exception %) results)}]
     final))
 
@@ -256,7 +262,7 @@
 (defn lein-self-update
   "Calls lein upgrade"
   []
-  @(run "lein upgrade"))
+  @(launch "lein upgrade"))
 
 
 (defn setup-system-time
@@ -272,16 +278,15 @@
     (assoc m k v)))
 
 
-
 (defn install-redhat-ddns
   "Installs the redhat-ddns-client
 
   This should be called after the repo files have been installed."
-  [& url]
+  [& {:keys [host url]}]
   (let [url-path (if (empty? url)
                    (get-in config [:config :ddns-client])
                    url)]
-    (run (str "rpm -Uvh " url-path))))
+    (launch (str "rpm -Uvh " url-path) :host host)))
 
 
 (defn install-vm
