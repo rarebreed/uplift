@@ -73,35 +73,36 @@
 (defn distro-info
   "Runs lsb_release -a and gets the name, version, and variant type:
    {:distributor-id name of the distro (eg Fedora or RHEL)
-    :release version number (eg 22 or 7.2
-    :variant type of OS (eg workstation or server)}"
-  ([info]
-   (let [pattern "^%s:\\s*(.*)$"
-         variant-patt #"\w+(Server|Client|Workstation)\w*"
-         ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
-         parsers (for [x ["Distributor ID" "Release"]]
-                   {(keywordize x) (re-pattern (format pattern x))})
-         ;; Run each regex on each line, return ([:NAME match?])
-         matches (for [parser parsers
-                       line (clojure.string/split info #"\n")]
-                   (let [keyname (first (keys parser))
-                         val (first (vals parser))
-                         _ (timbre/debug "Testing: " line " with " val)]
-                     [keyname (re-find val line)]))
-         ;; Only get the elements in the seq where the second element isn't nil
-         filtered (filter (fn [%] (if (second %) true nil)) matches)
-         ;; passed to reduce to return our final map
-         finalfn (fn [coll entry]
-                   (merge coll (let [f (first entry)
-                                     [whole value] (second entry)]
-                                 (hash-map f value))))
-         m (reduce finalfn {} filtered)
-         variant (second (re-find variant-patt (:distributor-id m)))]
-     (assoc m :variant variant)))
-  ([]
-   (let [res (launch "lsb_release -a")
-         output (:output res)]
-     (distro-info output))))
+    :release version number (eg 22 or 7.2)
+    :variant type of OS (eg workstation or server)
+    :major major release (as integer)
+    :minor minor release (as integer)}"
+  [host]
+  (let [info (-> (launch "lsb_release -a" :host host) :output)
+        pattern "^%s:\\s*(.*)$"
+        variant-patt #"\w+(Server|Client|Workstation)\w*"
+        ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
+        parsers (for [x ["Distributor ID" "Release"]]
+                  {(keywordize x) (re-pattern (format pattern x))})
+        ;; Run each regex on each line, return ([:NAME match?])
+        matches (for [parser parsers
+                      line (clojure.string/split info #"\n")]
+                  (let [keyname (first (keys parser))
+                        val (first (vals parser))
+                        _ (timbre/debug "Testing: " line " with " val)]
+                    [keyname (re-find val line)]))
+        ;; Only get the elements in the seq where the second element isn't nil
+        filtered (filter (fn [%] (if (second %) true nil)) matches)
+        ;; passed to reduce to return our final map
+        finalfn (fn [coll entry]
+                  (merge coll (let [f (first entry)
+                                    [whole value] (second entry)]
+                                (hash-map f value))))
+        m (reduce finalfn {} filtered)
+        variant (second (re-find variant-patt (:distributor-id m)))
+        [_ major minor] (re-find #"(\d+)\.?(\d*)" (:release m))
+        arch (-> (launch "uname -m" :host host) :output)]
+    (merge m {:variant variant :major (Integer/parseInt major) :minor (Integer/parseInt minor) :arch arch})))
 
 
 (defn remote-distro-info
@@ -167,6 +168,13 @@
    amd64 (which is the real name, not x86_64) for 64bit on x86"
   []
   (.getArch osb))
+
+
+(defn assert-arch
+  [host]
+  (let [output (-> (cmdr/launch "uname -m" :host host) :output)
+        arch (re-find #"i[3456]86|x86_64" output)]
+    (if arch true false)))
 
 
 ;; We will install the openjdk packages including jre and jdk on remote system
@@ -281,12 +289,10 @@
 (defn install-redhat-ddns
   "Installs the redhat-ddns-client
 
-  This should be called after the repo files have been installed."
-  [& {:keys [host url]}]
-  (let [url-path (if (empty? url)
-                   (get-in config [:config :ddns-client])
-                   url)]
-    (launch (str "rpm -Uvh " url-path) :host host)))
+  *Precondition*: This should be called after the repo files have been installed."
+  [& {:keys [host url]
+      :or {url (get-in config [:config :ddns-client])}}]
+  (launch (str "rpm -Uvh " url) :host host))
 
 
 (defn install-vm
@@ -299,3 +305,32 @@
 (defn create-dogtail-repo
   "Creates the dogtail repo to install dogtail"
   [])
+
+
+;; TODO: use selenium to setup a new host
+(defn ddns-host-create
+  "Uses selenium to setup a new ddns host"
+  [user pw hostname]
+  (let [url (format "https://%s:%s@")])
+  )
+
+;; TODO: use selenium to deletea host
+(defn ddns-host-delete
+  [user pw hostname])
+
+(defn edit-ddns-hosts
+  "Edits the /etc/redhat-ddns/hosts file"
+  [host testname uuid & {:keys [hostfile]
+                         :or {hostfile "/etc/redhat-ddns/hosts"}}]
+  (let [ddns-file (file-sys/get-remote-file host hostfile)
+        contents (slurp ddns-file)
+        search-patt (re-pattern uuid)
+        newline (clojure.string/join " " [testname "usersys.redhat.com" uuid])]
+    (when-not (re-seq search-patt contents)
+      (spit ddns-file newline :append true)
+      (file-sys/send-file-to host ddns-file :dest hostfile))))
+
+(defn ddns-client-enable
+  [host]
+  (cmdr/launch "/usr/bin/redhat-ddns-client enable" :host host)
+  (cmdr/launch "/usr/bin/redhat-ddns-client" :host host))

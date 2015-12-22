@@ -7,6 +7,34 @@
   (:import [java.nio.file Files Paths]
            [java.io File]))
 
+(defn make-path
+  [path]
+  (Paths/get path (into-array String [])))
+
+
+(def str->Path
+  "Alias for make-path"
+  make-path)
+
+
+(defn delete-file
+  [path]
+  (let [p (str->Path path)]
+    (try
+      (Files/delete p)
+      (catch Exception ex (format "Could not delete %s" path)))))
+
+
+(defn path-info
+  "Gets commonly used info for a path given as a string"
+  [path]
+  (let [p (make-path path)
+        f (.toFile p)]
+    {:file? (.isFile f)
+     :dir? (.isDirectory f)
+     :exists? (.exists f)
+     :parent (.getParent p)
+     :filename (.getFileName p)}))
 
 (defn directory-seq
   "Returns a sequence of DirectoryStream entries"
@@ -32,46 +60,9 @@
             _ (timbre/logf :info name)]
         name))))
 
-
-(defn file-exists?
-  [^String fpath & {:keys [host]}]
-  (if host
-    (let [cmd (format "ls -al %s" fpath)
-          result (uc/ssh  host cmd)]
-      (if (= 0 (:exit result)) true false))
-    (.exists (File. fpath))))
-
-
-(defn repo-file-exists?
-  [& {:keys [host repo-file]
-      :or {repo-file "rhel-latest.repo"}}]
-  (let [repo-path (str "/etc/yum.repos.d/" repo-file)]
-    (file-exists? repo-path :host host)))
-
-
 (defn path-name
   [path]
   (.toString (.getFileName path)))
-
-
-(defn get-remote-file
-  "Gets a remote file"
-  [host src & {:keys [user dest clean?]
-               :or {user "root" dest "." clean? true}}]
-  (let [temp "scp %s@%s:%s %s"
-        cmd (format temp user host src dest)
-        result (uc/launch cmd)
-        ]
-    result))
-
-
-(defn send-file-to
-  [host src & {:keys [user dest]
-               :or {user "root" dest ""}}]
-  (let [temp "scp %s %s@%s:%s"
-        cmd (format temp src user host dest)]
-    (uc/launch cmd)))
-
 
 (defn leading-slash?
   "Tests if a string has a leading slash"
@@ -142,24 +133,41 @@
   (File. path))
 
 
-(defn make-path
-  [path]
-  (Paths/get path (into-array String [])))
-
-
-(defn path-info
-  "Gets commonly used info for a path given as a string"
-  [path]
-  (let [p (make-path path)
-        f (.toFile p)]
-    {:file? (.isFile f)
-     :dir? (.isDirectory f)
-     :exists? (.exists f)
-     :parent (.getParent p)
-     :filename (.getFileName p)}))
-
-
 (defn path->file
   ""
   [path]
   (last (clojure.string/split path #"/")))
+
+(defn file-exists?
+  [^String fpath & {:keys [host]}]
+  (if host
+    (let [cmd (format "ls -al %s" fpath)
+          result (uc/launch cmd :host host)]
+      (if (= 0 (:status result)) true false))
+    (.exists (File. fpath))))
+
+
+(defn repo-file-exists?
+  [& {:keys [host repo-file]
+      :or {repo-file "rhel-latest.repo"}}]
+  (let [repo-path (str "/etc/yum.repos.d/" repo-file)]
+    (file-exists? repo-path :host host)))
+
+
+(defn get-remote-file
+  "Gets a remote file"
+  [host src & {:keys [user dest clean?]
+               :or {user "root" dest "." clean? true}}]
+  (let [temp "scp %s@%s:%s %s"
+        cmd (format temp user host src dest)
+        _ (uc/launch cmd :throws? true)
+        info (path-info src)]
+    (path-join dest (.toString (:filename info)))))
+
+
+(defn send-file-to
+  [host src & {:keys [user dest]
+               :or {user "root" dest ""}}]
+  (let [temp "scp %s %s@%s:%s"
+        cmd (format temp src user host dest)]
+    (uc/launch cmd :throws? true)))

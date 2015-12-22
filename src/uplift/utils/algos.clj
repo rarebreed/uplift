@@ -1,4 +1,5 @@
-(ns uplift.utils.algos)
+(ns uplift.utils.algos
+  (:require [clojure.core.match :refer [match]]))
 
 (defn lmap
   "Sometimes you don't want to iterate through every item in a sequence
@@ -62,3 +63,11 @@
                   keyword
                   #(clojure.string/replace % #"\s+" "-")
                   clojure.string/lower-case))
+
+(defn xor
+  "Exclusive OR"
+  [x y]
+  (match [x y]
+         [true true] false
+         [false false] false
+         :else true))
