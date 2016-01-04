@@ -40,44 +40,23 @@
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
 
 
-(defprotocol DepInstall
-  "Functionality to install all needed dependencies for GUI testing"
-  (setup-repos [this])
-  (install-deps [this]))
-
-
-(defprotocol SystemSetup
-  "Functionality to call system services or other functionality"
-  (timectl [this])
-  (firewallctl [this]))
-
-
-(s/defrecord Distro
-             [name :- s/Str                                            ;; eg RHEL
-              version :- s/Str                                         ;; eg 7.2
-              hostname :- s/Str                                        ;; eg my.home.org
-              bld-version :- s/Str                                      ;; a build name eg RHEL-7.1-20140630
-              ]
-             )
-
-
 (defrecord RHEL7 [distro]
-  DepInstall
+  uplift.protos/SystemSetup
   (install-deps [this]
     nil)
 
-  SystemSetup
+  uplift.protos/SystemSetup
   (firewallctl [this])
   (timectl [this]))
 
 (defrecord RHEL6 [distro]
-  DepInstall)
+  uplift.protos/SystemSetup
+  (install-deps [this]
+    nil)
 
-(defn factory
-  "Returns a Distro"
-  [host]
-  (let [info nil])
-  )
+  uplift.protos/SystemSetup
+  (firewallctl [this])
+  (timectl [this]))
 
 
 (defn install-uplift

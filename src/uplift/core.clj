@@ -6,6 +6,8 @@
             [uplift.utils.algos :refer [lmap items varargs keywordize]]
             [uplift.config.reader :as ucr]
             [cheshire.core :as ches]
+            [uplift.utils.log-config :as lc]
+            [uplift.protos :as uprotos :refer [RepoManager SystemSetup]]
             clojure.string)
   (:import [java.nio.file Paths]
            [java.io File]
@@ -16,17 +18,6 @@
 (def ddnsname (atom ""))
 (def ddnshash (atom ""))
 (def config (ucr/get-configuration))
-
-(defrecord Distro
-  [name
-   version
-   hostname
-   hash
-   timectl
-   firewallctl
-   repos
-   ]
-  )
 
 (defn set-hostname
   [name]
@@ -67,9 +58,16 @@
           (force call)))
       (force call))))
 
+(defrecord Distro
+  [distributor-id
+   release
+   variant
+   major
+   minor
+   arch])
 
 ;; Ughhh, Java doesn't have a good way to get distro information.  So
-;; we will scrape it from /etc/os-release
+;; we will scrape it from lsb_release -a
 (defn distro-info
   "Runs lsb_release -a and gets the name, version, and variant type:
    {:distributor-id name of the distro (eg Fedora or RHEL)
@@ -101,8 +99,9 @@
         m (reduce finalfn {} filtered)
         variant (second (re-find variant-patt (:distributor-id m)))
         [_ major minor] (re-find #"(\d+)\.?(\d*)" (:release m))
-        arch (-> (launch "uname -m" :host host) :output)]
-    (merge m {:variant variant :major (Integer/parseInt major) :minor (Integer/parseInt minor) :arch arch})))
+        arch (-> (launch "uname -m" :host host) :output (clojure.string/trim-newline))]
+    (map->Distro (merge m {:variant variant :major (Integer/parseInt major)
+                           :minor (Integer/parseInt minor) :arch arch}))))
 
 
 (defn remote-distro-info
@@ -334,3 +333,14 @@
   [host]
   (cmdr/launch "/usr/bin/redhat-ddns-client enable" :host host)
   (cmdr/launch "/usr/bin/redhat-ddns-client" :host host))
+
+(defmulti system-setup
+          "Sets up necessary services or other system level requirements"
+          (fn [distro-info host] [(:variant distro-info) (:major distro-info)]))
+
+(defmethod system-setup ["Server" 7]
+  [distro-info host]
+  ;;
+  (let [services (:output (launch "systemctl list-unit-files"))
+        matches (re-find #"ntpd.service" services)])
+  )
