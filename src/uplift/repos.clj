@@ -7,7 +7,8 @@
             [uplift.config.reader :as ucr]
             [uplift.config :as ucfg]
             [uplift.core :as uco]
-            [commando.command :as cmdr :refer [launch]]))
+            [commando.command :as cmdr :refer [launch]]
+            [uplift.utils.log-config]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
@@ -17,6 +18,13 @@
 (def config (:config devconfig))
 (def url-format (get config :url-format))
 
+(defn install-epel
+  [distro-info host]
+  (let [{:keys [major arch]} distro-info
+        baseurl "https://dl.fedoraproject.org/pub/epel/epel-release-latest-%d.noarch.rpm"
+        rpmurl (format baseurl major)
+        cmd (format "rpm -Uvh %s" rpmurl)]
+    (launch cmd :host host)))
 
 (defprotocol ToConfig
   (write-to-config [this filename] "Creates a config file representation"))
@@ -186,14 +194,13 @@
                            (let [[index repo-section] entry
                                  enabled? (= "enabled" (:key repo-section))
                                  no-comment? (nil? (:comment repo-section))]
-                             (println "enabled?" enabled? "comment?" no-comment?)
                              (and enabled? no-comment?)))
                          matches)]
     (when host
       (file-sys/delete-file new-repo))
     (if (not= (count filtered) 1)
       false
-      (= "0" (-> (first filtered) second (:value))))))
+      (= "1" (-> (first filtered) second (:value))))))
 
 
 (defn repo-set-key
@@ -205,14 +212,15 @@
   - enabled?: if true enable repo, if false, disable repo
   - dest-path: path where new file will be written (defaults to same as repo)"
   [repo section key value & {:keys [dest-path host]}]
-  (let [repo (if host
-               (file-sys/get-remote-file host repo)
-               repo)
+  (let [local-repo (when host
+                     (file-sys/get-remote-file host repo))
         dest-path (if dest-path dest-path repo)
-        cmap (ucfg/set-conf-file repo key value :section section)
-        edited-repo (ucfg/vec-to-file cmap dest-path)]
+        work-copy (if local-repo local-repo repo)
+        copy-src (if local-repo local-repo dest-path)
+        cmap (ucfg/set-conf-file work-copy key value :section section)
+        edited-repo (ucfg/vec-to-file cmap copy-src)]
     (if host
-      (file-sys/send-file-to repo dest-path)
+      (file-sys/send-file-to host work-copy :dest dest-path)
       edited-repo)))
 
 
@@ -225,15 +233,19 @@
   - enabled?: if true enable repo, if false, disable repo
   - dest-path: path where new file will be written (defaults to same as repo)"
   [repo section enabled? & args]
-  (repo-set-key repo section "enabled" (if enabled? "1" "0")) args)
+  (let [enable (partial repo-set-key repo section "enabled" (if enabled? "1" "0"))]
+    (apply enable args)))
 
 
 (defn gpgcheck-enable
   [repo section enabled? & args]
-  (repo-set-key repo section "gpgcheck" (if enabled? "1" "0")) args)
+  (let [gpgcheck (partial (repo-set-key repo section "gpgcheck" (if enabled? "1" "0")))]
+    (apply gpgcheck args)))
 
 
 (defn make-default-nightly-repo-file
+  "Creates a nightly repo file.  Since it uses make-yum-repo, it will use the baseurl from the
+  user.edn file for formatting"
   [host & {:keys [fpath clear]
            :or {fpath "/etc/yum.repos.d/rhel-latest.repo"
                 clear false}}]
@@ -259,10 +271,8 @@
   [distro-info host]
   (launch "yum -y --skip-broken groupinstall gnome-desktop network-tools" :host host)
   (when (re-find #"i[3456]86|x86_64" (:arch distro-info))
-    (if (file-sys/repo-file-exists? :host host :repo-file "epel.repo")
-      ()
-      (let [epel-url "http://dl.fedoraproject.org/pub/epel/7/x86_64/e/epel-release-7-2.noarch.rpm"
-            _ (cmdr/launch (format "yum install -y %s" epel-url) :host host)
+    (when-not (file-sys/repo-file-exists? :host host :repo-file "epel.repo")
+      (let [_ (install-epel distro-info host)
             dogtail (-> {:reponame "[dogtail]"
                          :name     "Dogtail"
                          :baseurl  "https://vhumpa.fedorapeople.org/dogtail/repo/dogtail/noarch/"
@@ -274,4 +284,9 @@
 
 (defmethod enable-repos ["Server" 6]
   [distro-info host]
-  (launch "yum -y groupinstall Dektop" :host host))
+  (launch "yum -y groupinstall Dektop" :host host)
+  ;; Check if we have the epel.repo
+  (let [epel? (file-sys/repo-file-exists? :host host :repo-file "/etc/yum.repos.d/epel.repo")]
+    (when-not epel?
+      (install-epel distro-info host))
+    (set-repo-enable "/etc/yum.repos.d/epel.repo" "epel" true :host host)))
