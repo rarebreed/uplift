@@ -156,6 +156,8 @@
                             delimeter  "="}}]
   (let [vmap (get-conf-file file)                              ;; vector of entries from conf file
         found (validate-entries (get-conf-key vmap key section)) ;; indexed vec of vec of matches on key/section
+        ;; FIXME: make it so that if section is nil, it will change all keys in any section
+        ;; (ie, do it in a doseq or map)
         uncommented (first (get-uncommented-entry found))
         delim (cond
                 uncommented (do
@@ -226,6 +228,10 @@
                             mod (if not-found? :insert :modify)]
                         (set-conf-key vmap index entry mod)))]
     (reduce set-entries grub-conf newentries)))
+
+(defn get-sections
+  "Returns a seq of all the sections in a config file"
+  [])
 
 
 (comment

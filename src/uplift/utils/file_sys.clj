@@ -3,7 +3,8 @@
             [uplift.utils.algos :refer [varargs]]
             [taoensso.timbre :as timbre]
             [clojure.core.match :refer [match]]
-            [clojure.java.io :as cji])
+            [clojure.java.io :as cji]
+            [uplift.utils.log-config])
   (:import [java.nio.file Files Paths]
            [java.io File]))
 
