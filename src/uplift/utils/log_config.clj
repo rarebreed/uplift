@@ -7,13 +7,20 @@
             [clj-time.format :as ctf]))
 
 (defn make-timestamp
+  [& {:keys [fmt]
+      :or {fmt "yyyy-MM-dd-HH-mm-ss"}}]
+  (let [time-now (ct/now)
+        fmt (ctf/formatter fmt)]
+    (ctf/unparse fmt time-now)))
+
+(defn make-timestamped-file
   [base & {:keys [suffix]
            :or {suffix ".log"}}]
-  (let [time-now (ct/now)
-        fmt (ctf/formatter "yyyy-MM-dd-HH-mm-ss")]
-    (str base "-" (ctf/unparse fmt time-now) suffix)))
+  (let [ts (make-timestamp)]
+    (str base "-" ts suffix)))
 
-(def ^:dynamic *default-log-file* (str "/tmp/" (make-timestamp "commando")))
+
+(def ^:dynamic *default-log-file* (str "/tmp/" (make-timestamped-file "commando")))
 
 (defn print-append
   [data]

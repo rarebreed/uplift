@@ -4,7 +4,7 @@
             [taoensso.timbre :as timbre]
             [clojure.core.match :refer [match]]
             [clojure.java.io :as cji]
-            [uplift.utils.log-config])
+            [uplift.utils.log-config :as lc :refer [make-timestamped-file]])
   (:import [java.nio.file Files Paths]
            [java.io File]))
 
@@ -19,15 +19,17 @@
 
 
 (defn delete-file
-  [path]
-  (let [p (str->Path path)]
-    (try
-      (Files/delete p)
-      (catch Exception ex (format "Could not delete %s" path)))))
+  ([path]
+   (let [p (str->Path path)]
+     (try
+       (Files/delete p)
+       (catch Exception ex (format "Could not delete %s" path)))))
+  ([host path]
+    (uc/launch (format "rm -f %s" path) :host host) :throws? true))
 
 
 (defn path-info
-  "Gets commonly used info for a path given as a string"
+  "Gets commonly used info for a path given as a string. "
   [path]
   (let [p (make-path path)
         f (.toFile p)]
@@ -47,7 +49,9 @@
 
 
 (defn list-files
-  "Returns a listing of files in a directory"
+  "Returns a listing of files in a directory
+
+  Only works locally"
   [entries & filters]
   (let [filters (if (nil? filters)
                   [(fn [_] true)]
@@ -172,3 +176,27 @@
   (let [temp "scp %s %s@%s:%s"
         cmd (format temp src user host dest)]
     (uc/launch cmd :throws? true)))
+
+
+(defn make-backup
+  "Checks to see if a file exists named by orig.
+
+  If it finds an alternative file ending, it will generate a timestamped new ending"
+  [fpath & {:keys [host]}]
+  (let [{:keys [filename parent]} (path-info fpath)
+        [orig dir] (for [d [filename parent]]
+                     (.toString d))
+        orig-patt (re-pattern (format "^%s(\\..*)*" orig))
+        entries (-> (uc/launch (str "ls -A " dir) :host host) :output (clojure.string/split #"\n"))
+        m (for [e entries]
+            (re-matches orig-patt e))
+        matched (-> (filter #(not (nil? %)) m) sort)
+        fullpath (path-join dir orig)
+        _ (when (empty? matched)
+            (throw (Exception. (format "%s does not exist" fullpath))))
+        ts (lc/make-timestamp)
+        backup (str (first (first matched)) "." ts)
+        backup-path (path-join dir backup)]
+    ;; copy /dir/orig to /dir/ts
+    {:all m :matches matched :ts backup :fullpath fullpath :backup backup-path
+     :result (uc/launch (format "cp %s %s" fullpath backup-path) :host host)}))

@@ -8,6 +8,7 @@
             [cheshire.core :as ches]
             [uplift.utils.log-config :as lc]
             [uplift.protos :as uprotos :refer [RepoManager SystemSetup]]
+            [clojure.core.match :refer [match]]
             clojure.string)
   (:import [java.nio.file Paths]
            [java.io File]
@@ -169,10 +170,15 @@
   (.getArch osb))
 
 
-(defn assert-arch
+(defn get-arch
   [host]
   (let [output (-> (cmdr/launch "uname -m" :host host) :output)
         arch (re-find #"i[3456]86|x86_64" output)]
+    arch))
+
+(defn assert-arch
+  [host]
+  (let [arch (get-arch host)]
     (if arch true false)))
 
 
@@ -271,7 +277,7 @@
   []
   @(launch "lein upgrade"))
 
-
+;; FIXME: not needed...use setup-system
 (defn setup-system-time
   "Runs ntpd on system"
   [])
@@ -334,13 +340,69 @@
   (cmdr/launch "/usr/bin/redhat-ddns-client enable" :host host)
   (cmdr/launch "/usr/bin/redhat-ddns-client" :host host))
 
-(defmulti system-setup
-          "Sets up necessary services or other system level requirements"
+(defn system-time-factory
+  [host version]
+  (letfn [(ntpd? []
+            (let [services (launch "systemctl list-unit-files" :host host)]
+              (re-find #"ntpd.service\s+enabled" services)))
+          (ver7 []
+            (let [launch+ #(launch % :host host)]
+              (when-not (ntpd?)
+                (let [cmds ["yum install -y ntp"
+                            "rpm -q ntp"
+                            "systemctl stop ntpd.service"
+                            "ntpdate clock.redhat.com"
+                            "systemctl start ntpd.service"
+                            "systemctl enable ntpd.service"]]
+                  (list (for [cmd cmds]
+                          (launch+ cmd)))))))
+          (ver6 []
+            (let [launch+ #(launch % :host host)
+                  cmds ["service ntpd stop"
+                        "ntpdate clock.redhat.com"
+                        "systemctl start ntpd.service"
+                        "systemctl enable ntpd.service"]]
+              (list (for [cmd cmds]
+                      (launch+ cmd)))))]
+    (match version
+           7 ver7
+           6 ver6)))
+
+(defmulti disable-firewall
+          "Disables the firewall"
           (fn [distro-info host] [(:variant distro-info) (:major distro-info)]))
 
-(defmethod system-setup ["Server" 7]
+(defmethod disable-firewall ["Server" 7]
+  [_ host]
+  (launch "systemctl stop firewalld.service" :host host)
+  (launch "systemctl disable firewalld.service" :host host))
+
+(defmethod disable-firewall ["Server" 6]
+  [_ host]
+  (launch "service iptables stop" :host host)
+  (launch "chkconfig iptables off" :host host))
+
+(defn system-setup
   [distro-info host]
-  ;;
-  (let [services (:output (launch "systemctl list-unit-files"))
-        matches (re-find #"ntpd.service" services)])
-  )
+  (let [timectl (system-time-factory host (:major distro-info))]
+    (timectl)
+    (disable-firewall distro-info host)))
+
+(defn add-alias
+  [host cmdname cmd & {:keys [bashrc]}]
+  (let [bashrc (if bashrc
+                 bashrc
+                 (let [home (-> (launch "echo $HOME" :host host) :output (clojure.string/trim))]
+                   (file-sys/path-join home ".bashrc")))
+        alias- (format "alias %s='%s'" cmdname cmd)
+        oldbashrc (file-sys/get-remote-file host bashrc)
+        backup (file-sys/make-backup bashrc :host host)]
+    (spit oldbashrc alias- :append true)
+    {:send-result (file-sys/send-file-to host oldbashrc :dest bashrc)
+     :bashrc bashrc
+     :alias alias-
+     :oldbashrc oldbashrc
+     :backup backup}))
+
+(defn install-deps []
+  (let [yum-deps ["subscription-manager*" "expect" "python-setuptools"]] ))

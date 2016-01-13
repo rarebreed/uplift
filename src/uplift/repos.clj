@@ -8,6 +8,7 @@
             [uplift.config :as ucfg]
             [uplift.core :as uco]
             [commando.command :as cmdr :refer [launch]]
+            [taoensso.timbre :refer [log]]
             [uplift.utils.log-config]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
@@ -64,9 +65,9 @@
                     flavor "Server"
                     arch "x86_64"
                     debug false}}]
-  (println "in build-url")
+  (log :debug "in build-url")
   (doseq [[k v] opts]
-    (println k "=" v))
+    (log :debug k "=" v))
   (let [type (name rtype)
         repod (if debug "debug/tree" "os")]
     (format url-fmt type version flavor arch repod)))
@@ -84,11 +85,11 @@
                               gpgcheck "0"
                               debug false}}]
   (doseq [[k v] opts]
-    (println k "=" v))
+    (log :debug k "=" v))
   (let [url (if url
               url
               (build-url-rhel url-fmt :rtype rtype :version version :flavor flavor :arch arch :debug debug))]
-    (println url)
+    (log :debug url)
     (-> {:reponame repo
          :name (if description
                  description
@@ -118,7 +119,7 @@
 
 
 (defn make-default-repo-file
-  "Creates a nightly repo file in /etc/yum.repos.d/rhel-latest.repo"
+  "Creates a RHEL7 repo file in /etc/yum.repos.d/rhel-latest.repo"
   [version & {:keys [fpath clear]
               :or {fpath "/etc/yum.repos.d/rhel-latest.repo"
                    clear false}}]
@@ -130,7 +131,7 @@
       (write-to-config latest fpath)
       (write-to-config latest-optional fpath)
       (write-to-config latest-debuginfo fpath)))
-  (println (slurp fpath)))
+  (log :info (slurp fpath)))
 
 
 (defn get-page [url]
@@ -290,3 +291,18 @@
     (when-not epel?
       (install-epel distro-info host))
     (set-repo-enable "/etc/yum.repos.d/epel.repo" "epel" true :host host)))
+
+(defn exit-zero
+  "Disables all repos"
+  [host & {:keys [repos]}]
+  (let [repos (if-not repos
+                ["dogtail" "ldtp" "epel" "fedora" "latest-rhel"]
+                repos)
+        base-path "/etc/yum.repos.d/"]
+    (doseq [r repos]
+      (let [repo-path (file-sys/path-join base-path r)
+            _ (file-sys/get-remote-file host repo-path)
+            sections (ucfg/get-sections r)]
+        (doseq [s sections]
+          (set-repo-enable r s false))
+        (file-sys/send-file-to host r :dest repo-path)))))

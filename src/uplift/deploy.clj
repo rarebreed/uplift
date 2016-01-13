@@ -34,7 +34,8 @@
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.repos :as ur]
-            [schema.core :as s]))
+            [schema.core :as s]
+            [clojure.core.match :refer [match]]))
 
 (def config (ucr/get-configuration))
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
@@ -93,6 +94,21 @@
     (file-sys/get-remote-file candle src :dest dest)))
 
 
+(defn validate-system-arch
+  [host]
+  (let [base ["x86_64" "i386"]
+        {:keys [distributor-id major release arch] :as di} (uc/distro-info host)
+        distro (if (re-find #"RedHatEnterprise" distributor-id)
+                 (keyword (str "rhel" major))
+                 (keyword (str distributor-id release)))
+        valid (match distro
+                     :rhel7 base
+                     :rhel6 (conj base "ppc64"))]
+    (if (some (set [arch]) valid)
+      di
+      (throw (Exception. (format "%s not a valid arch for %s %s" (:arch di) distributor-id release))))))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
@@ -106,6 +122,7 @@
         copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
         [{:keys [variant distributor-id release major minor]
           :as distro-info}] (uc/remote-distro-info host)
+        _ (validate-system-arch host)
         repo-install-res (ur/make-default-nightly-repo-file host)
         _ (ur/enable-repos distro-info)
         _ (launch "yum -y install wget" :host host)
@@ -114,7 +131,6 @@
             (uc/install-redhat-ddns :host host)
             (uc/edit-ddns-hosts host ddns-name ddns-uuid)
             (uc/ddns-client-enable host))
-
 
         [_ java-major java-minor] (uc/check-java :host host)
         install-jdk-res (cond

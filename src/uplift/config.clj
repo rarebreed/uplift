@@ -230,8 +230,10 @@
     (reduce set-entries grub-conf newentries)))
 
 (defn get-sections
-  "Returns a seq of all the sections in a config file"
-  [])
+  "Returns a vec of all the sections in a config file"
+  [cfg-file]
+  (let [vmap (get-conf-file cfg-file)]
+    (vec (set (map :section vmap)))))
 
 
 (comment

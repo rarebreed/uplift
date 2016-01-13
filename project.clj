@@ -19,7 +19,7 @@
                  [danlentz/clj-uuid "0.1.6"]
                  [http-kit "2.1.18"]
                  [cheshire "5.5.0"]
-                 [commando "0.1.1-SNAPSHOT"]
+                 [commando "0.1.2-SNAPSHOT"]
                  [clj-time "0.11.0"]]
 
   :java-source-paths ["src"]
