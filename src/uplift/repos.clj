@@ -9,7 +9,8 @@
             [uplift.core :as uco]
             [commando.command :as cmdr :refer [launch]]
             [taoensso.timbre :refer [log]]
-            [uplift.utils.log-config]))
+            [uplift.utils.log-config]
+            [uplift.core :as uc]))
 
 (def latest-rhel7-server "[latest-rhel7-server]") 
 (def latest-rhel7-server-optional "[latest-rhel7-server-optional]")
@@ -74,7 +75,20 @@
 
 
 (defn make-yum-repo
-  "Creates a YumRepo record which can be used to create a repo file"
+  "Creates a YumRepo record which can be used to create a repo file
+
+  *Args*
+  - rtype:(keyword) of :nightly or :rel-eng
+  - version: (String) eg RHEL-6.8-20120225.0
+  - repo: (String) the section name in the repo file
+  - url: (String) the baseurl
+  - url-fmt: (String) a string formatter
+  - flavor: an extra string that will be used in url-fmt
+  - arch: the arch to build the url (used in url-fmt)
+  - enabled: (String) 0 or 1
+  - gpgcheck: (String) 0 or 1
+  - description: (String) puit in the value of the name key for the repo
+  - debug: if true, set the optional packages"
   [rtype version repo & {:keys [url url-fmt flavor arch enabled gpgcheck description debug]
                          :as opts
                          :or {url nil
@@ -247,18 +261,19 @@
 (defn make-default-nightly-repo-file
   "Creates a nightly repo file.  Since it uses make-yum-repo, it will use the baseurl from the
   user.edn file for formatting"
-  [host & {:keys [fpath clear]
+  [host & {:keys [fpath clear dest opt]
            :or {fpath "/etc/yum.repos.d/rhel-latest.repo"
-                clear false}}]
+                clear false
+                opt "%s/optional"}}]
   (if (file-sys/file-exists? fpath :host host)
     "rhel-latest.repo already exists"
-    (let [{:keys [variant major]} (uco/remote-distro-info host)
+    (let [{:keys [variant major]} (uco/distro-info host)
           ver (format "latest-RHEL-%d" major)
           section (format "[latest-rhel-%d-nightly]" major)
           nightly (make-yum-repo :nightly ver section :flavor variant)
-          nightly-opts (make-yum-repo :nightly ver section :flavor (format "%s-optional" variant))]
-      (write-to-config nightly fpath)
-      (write-to-config nightly-opts fpath))))
+          nightly-opts (make-yum-repo :nightly ver section :flavor (format opt variant))]
+      (write-to-config nightly dest)
+      (write-to-config nightly-opts dest))))
 
 
 (defmulti enable-repos
@@ -274,6 +289,7 @@
   (when (re-find #"i[3456]86|x86_64" (:arch distro-info))
     (when-not (file-sys/repo-file-exists? :host host :repo-file "epel.repo")
       (let [_ (install-epel distro-info host)
+            _ (uc/install-deps ["python-pip"] :host host)
             dogtail (-> {:reponame "[dogtail]"
                          :name     "Dogtail"
                          :baseurl  "https://vhumpa.fedorapeople.org/dogtail/repo/dogtail/noarch/"
@@ -285,12 +301,13 @@
 
 (defmethod enable-repos ["Server" 6]
   [distro-info host]
-  (launch "yum -y groupinstall Dektop" :host host)
+  (launch "yum -y groupinstall Desktop" :host host)
   ;; Check if we have the epel.repo
   (let [epel? (file-sys/repo-file-exists? :host host :repo-file "/etc/yum.repos.d/epel.repo")]
     (when-not epel?
       (install-epel distro-info host))
-    (set-repo-enable "/etc/yum.repos.d/epel.repo" "epel" true :host host)))
+    (set-repo-enable "/etc/yum.repos.d/epel.repo" "epel" true :host host)
+    (uc/install-deps ["python-pip"] :host host)))
 
 (defn exit-zero
   "Disables all repos"

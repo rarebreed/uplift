@@ -67,55 +67,18 @@
    minor
    arch])
 
-;; Ughhh, Java doesn't have a good way to get distro information.  So
-;; we will scrape it from lsb_release -a
-(defn distro-info
-  "Runs lsb_release -a and gets the name, version, and variant type:
-   {:distributor-id name of the distro (eg Fedora or RHEL)
-    :release version number (eg 22 or 7.2)
-    :variant type of OS (eg workstation or server)
-    :major major release (as integer)
-    :minor minor release (as integer)}"
-  [host]
-  (let [info (-> (launch "lsb_release -a" :host host) :output)
-        pattern "^%s:\\s*(.*)$"
-        variant-patt #"\w+(Server|Client|Workstation)\w*"
-        ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
-        parsers (for [x ["Distributor ID" "Release"]]
-                  {(keywordize x) (re-pattern (format pattern x))})
-        ;; Run each regex on each line, return ([:NAME match?])
-        matches (for [parser parsers
-                      line (clojure.string/split info #"\n")]
-                  (let [keyname (first (keys parser))
-                        val (first (vals parser))
-                        _ (timbre/debug "Testing: " line " with " val)]
-                    [keyname (re-find val line)]))
-        ;; Only get the elements in the seq where the second element isn't nil
-        filtered (filter (fn [%] (if (second %) true nil)) matches)
-        ;; passed to reduce to return our final map
-        finalfn (fn [coll entry]
-                  (merge coll (let [f (first entry)
-                                    [whole value] (second entry)]
-                                (hash-map f value))))
-        m (reduce finalfn {} filtered)
-        variant (second (re-find variant-patt (:distributor-id m)))
-        [_ major minor] (re-find #"(\d+)\.?(\d*)" (:release m))
-        arch (-> (launch "uname -m" :host host) :output (clojure.string/trim-newline))]
-    (map->Distro (merge m {:variant variant :major (Integer/parseInt major)
-                           :minor (Integer/parseInt minor) :arch arch}))))
-
-
-(defn remote-distro-info
-  [host]
-  (let [rfile (launch "lsb_release -a" :host host :throws? true)]
-    (distro-info (:output rfile))))
-
 
 (def yum-script
   ["import yum"
    "import json"
+   "import platform"
+   "import copy"
    "yb = yum.YumBase()"
-   "yb_s = json.dumps(yb.conf.yumvar)"
+   "d_id, release, _ = platform.linux_distribution()"
+   "temp = copy.deepcopy(yb.conf.yumvar)"
+   "temp['release'] = release"
+   "temp['id'] = d_id"
+   "yb_s = json.dumps(temp)"
    "print yb_s"])
 
 
@@ -126,8 +89,66 @@
   (file-sys/send-file-to host "yum_base.py")
   (let [result (launch "python yum_base.py" :host host)
         output (second (clojure.string/split (:output result) #"\n"))
-        yum (ches/parse-string output)]
+        yum (ches/parse-string output true)]
     yum))
+
+
+(defn yum->Distro
+  [yum-output]
+  (let [[_ major variant] (re-find #"^(\d+)(\w+)" (:releasever yum-output))
+        [_ minor] (clojure.string/split (:release yum-output) #"\.")
+        keys {:major          major
+              :minor          minor
+              :release        (:release yum-output)
+              :variant        variant
+              :distributor-id (-> (clojure.string/replace (:id yum-output) #"Linux" "")
+                                  (clojure.string/replace #" " ""))
+              :arch           (:basearch yum-output)}]
+    (map->Distro keys)))
+
+;; Ughhh, Java doesn't have a good way to get distro information.  So
+;; we will scrape it from lsb_release -a
+(defn distro-info
+  "Runs lsb_release -a and gets the name, version, and variant type:
+   {:distributor-id name of the distro (eg Fedora or RHEL)
+    :release version number (eg 22 or 7.2)
+    :variant type of OS (eg workstation or server)
+    :major major release (as integer)
+    :minor minor release (as integer)}"
+  [host]
+  ;; Ughhh this is ugly.  So RHEL 6.x doesn't come with lsb_release.  So we will throw an exception if we're on
+  ;; RHEL6, and get the distro info another way
+  (try
+    (let [info (-> (launch "lsb_release -a" :host host :throws true) :output)
+          pattern "^%s:\\s*(.*)$"
+          variant-patt #"\w+(Server|Client|Workstation)\w*"
+          ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
+          parsers (for [x ["Distributor ID" "Release"]]
+                    {(keywordize x) (re-pattern (format pattern x))})
+          ;; Run each regex on each line, return ([:NAME match?])
+          matches (for [parser parsers
+                        line (clojure.string/split info #"\n")]
+                    (let [keyname (first (keys parser))
+                          val (first (vals parser))
+                          _ (timbre/debug "Testing: " line " with " val)]
+                      [keyname (re-find val line)]))
+          ;; Only get the elements in the seq where the second element isn't nil
+          filtered (filter (fn [%] (if (second %) true nil)) matches)
+          ;; passed to reduce to return our final map
+          finalfn (fn [coll entry]
+                    (merge coll (let [f (first entry)
+                                      [whole value] (second entry)]
+                                  (hash-map f value))))
+          m (reduce finalfn {} filtered)
+          variant (second (re-find variant-patt (:distributor-id m)))
+          [_ major minor] (re-find #"(\d+)\.?(\d*)" (:release m))
+          arch (-> (launch "uname -m" :host host) :output (clojure.string/trim-newline))]
+      (map->Distro (merge m {:variant variant :major (Integer/parseInt major)
+                             :minor   (Integer/parseInt minor) :arch arch})))
+    (catch Exception ex
+      ;; We've got RHEL 6, so use yum-base instead
+      (yum->Distro (yum-base host)))
+    ))
 
 
 (defn enabled-repos
@@ -300,18 +321,6 @@
   (launch (str "rpm -Uvh " url) :host host))
 
 
-(defn install-vm
-  "Uses virt-install to install a virtual machine"
-  [location]
-  (let [cmd "virt-install -l %s "])
-  )
-
-
-(defn create-dogtail-repo
-  "Creates the dogtail repo to install dogtail"
-  [])
-
-
 ;; TODO: use selenium to setup a new host
 (defn ddns-host-create
   "Uses selenium to setup a new ddns host"
@@ -389,12 +398,13 @@
     (disable-firewall distro-info host)))
 
 (defn add-alias
-  [host cmdname cmd & {:keys [bashrc]}]
+  [cmdname cmd & {:keys [bashrc host]
+                  :or {host "localhost"}}]
   (let [bashrc (if bashrc
                  bashrc
                  (let [home (-> (launch "echo $HOME" :host host) :output (clojure.string/trim))]
                    (file-sys/path-join home ".bashrc")))
-        alias- (format "alias %s='%s'" cmdname cmd)
+        alias- (format "\nalias %s='%s'" cmdname cmd)
         oldbashrc (file-sys/get-remote-file host bashrc)
         backup (file-sys/make-backup bashrc :host host)]
     (spit oldbashrc alias- :append true)
@@ -404,5 +414,60 @@
      :oldbashrc oldbashrc
      :backup backup}))
 
-(defn install-deps []
-  (let [yum-deps ["subscription-manager*" "expect" "python-setuptools"]] ))
+(defn query-pkg
+  [host pkgname]
+  (:output (launch (str "rpm -q " pkgname :host host))))
+
+(defn list-packages
+  [& {:keys [host]}]
+  (-> (launch  "rpm -qa" :host host :show-out? false) :output (clojure.string/split #"\n")))
+
+(defn filter-packages
+  [packages re]
+  (let [re (cond
+             (= String (type re)) (re-pattern re)
+             (= java.util.regex.Pattern (type re)) re
+             :else (throw (Exception. "re arg must be a string or regex pattern")))]
+    (filter #(re-find re %) packages)))
+
+
+(defn- check-deps
+  [host deps]
+  (every? #(if % % false)
+          (for [d deps]
+            (-> (launch (str "rpm -q " d) :host host) :status (= 0)))))
+
+(defn install-deps
+  [deps & {:keys [host]}]
+  {:post [(partial check-deps host)]}
+  (let [yum-deps (clojure.string/join " " deps)
+        yum-cmd (format "yum install -y %s" yum-deps)]
+    (launch yum-cmd :host host :show-out? false)))
+
+
+(defn yum-whatprovides
+  [name & {:keys [host]}]
+  (launch "yum check-update" :host host :throws false)
+  (let [pkg (launch (str "yum whatprovides " name) :host host :throws false)
+        pkg (if (not= 0 (:status pkg))
+              (launch (format "yum whatprovides */%s" name) :host host :throws false)
+              pkg)]
+    ))
+
+(defn disable-gnome-initial-setup
+  "Not sure if this works.  Tries to eliminate the gnome3 splash screen"
+  [host]
+  (let [distro (distro-info host)
+        _ (launch "mkdir -p /etc/skel/.config" :throws false :host host)
+        _ (launch "mkdir -p /root/.config" :throws false :host host)
+        skel-path "/etc/skel/.config/gnome-initial-setup-done"
+        root-path "/root/.config/gnome-initial-setup-done"
+        check-n-send #(when-not (file-sys/file-exists? %1 :host host)
+                       (spit %1 "yes")
+                       (file-sys/send-file-to host "gnome-initial-setup-done" :dest %2))]
+    (check-n-send skel-path "/etc/skel/.config")
+    (check-n-send root-path "/root/.config")))
+
+(defmulti setup-automation-command-server
+          "Sets up ldtp and vnc"
+          (fn [dist-info host] [(:major dist-info)]))

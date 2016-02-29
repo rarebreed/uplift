@@ -109,6 +109,13 @@
       (throw (Exception. (format "%s not a valid arch for %s %s" (:arch di) distributor-id release))))))
 
 
+(defn set-aliases
+  "Adds 2 default aliases"
+  [host]
+  (uc/add-alias "rhsm-version" "rpm -qa | egrep \"python-rhsm|subscription\"" :host host)
+  (uc/add-alias "newrhsm" "yum -y update subscription-manager* python-rhsm" :host host))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
@@ -121,22 +128,41 @@
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
         copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
         [{:keys [variant distributor-id release major minor]
-          :as distro-info}] (uc/remote-distro-info host)
+          :as distro-info}] (uc/distro-info host)
+
+        ;; No point in continuing if we're not a supported arch
         _ (validate-system-arch host)
-        repo-install-res (ur/make-default-nightly-repo-file host)
-        _ (ur/enable-repos distro-info)
+
+        ;; Create the nightly repo file so we can install dependencies
+        repo-install-res (ur/make-default-nightly-repo-file host :dest "/tmp/rhel")
+        _ (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d/")
+        _ (ur/enable-repos distro-info host)
         _ (launch "yum -y install wget" :host host)
+
         ;; install and configure redhat ddns
         _ (when ddns-uuid
             (uc/install-redhat-ddns :host host)
             (uc/edit-ddns-hosts host ddns-name ddns-uuid)
             (uc/ddns-client-enable host))
 
+        ;; Do system setup to control firewall, set system time, etc
+        system-res (uc/system-setup distro-info host)
+
+        ;; Set aliases and install dependencies
+        _ (launch "pip install python-image")
+        deps ["subscription-manager-migration*" "expect" "python-pip" "python-devel" "dogtail" "git"
+              "translate-toolkit"]
+        _ (uc/install-deps deps :host host)
+        _ (launch "pip install coverage" :host host)
+        _ (set-aliases host)
+
+        ;; Install java dependencies
         [_ java-major java-minor] (uc/check-java :host host)
         install-jdk-res (cond
                           (= java-major "0") (uc/install-jdk host 8)
                           (= java-major "7") nil
                           :else (timbre/logf :info (format "Java 1.%s_%s already installed" java-major java-minor)))
+
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
@@ -144,7 +170,9 @@
                              (if (-> lein-check :exit (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))
-        ;; Install uplift
+
+        ;; FIXME: we need to install uplift and pheidippides
         uplift-res (install-uplift host)]
     {:copy-key-res copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
-     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res}))
+     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res
+     :system-res system-res}))
