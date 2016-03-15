@@ -21,7 +21,9 @@
                  [cheshire "5.5.0"]
                  [commando "0.1.2-SNAPSHOT"]
                  [clj-time "0.11.0"]
-                 [org.testng "6.9.10"]]
+                 [org.testng/testng "6.9.10"]]
+
+  :repositories [["jcenter" "http://jcenter.bintray.com"]]
 
   :java-source-paths ["src"]
   :aot :all)

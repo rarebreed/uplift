@@ -1,44 +1,6 @@
 (ns uplift.utils.reflector
-  (:import [org.testng.annotations Test]
-           [java.nio.file Paths Files]))
-
-(defn varargs
-  "Useful for java interop where a method uses var args"
-  [f arg & args]
-  (let [t (class arg)]
-    (f arg (into-array t (if args args [])))))
-
-
-(defn directory-seq
-  "Returns a sequence of DirectoryStream entries"
-  [^String path]
-  (let [p (varargs #(Paths/get %1 %2) path)
-        ds (Files/newDirectoryStream p)]
-    (for [d ds]
-      d)))
-
-
-(defn list-files
-  "Returns a listing of files in a directory
-
-  Only works locally"
-  [entries & filters]
-  (let [filters (if (nil? filters)
-                  [(fn [_] true)]
-                  filters)
-        ;; apply the the filter functions to the entries and make them a set
-        filtered (reduce clojure.set/union #{}
-                         (for [f filters]
-                           (set (filter f entries))))]
-    (for [d filtered]
-      (let [name (.toString (.getFileName d))]
-        name))))
-
-
-(defn file-list
-  [^String path]
-  (let [entries (directory-seq path)]
-    (list-files entries)))
+  (:import [org.testng.annotations Test])
+  (:require [uplift.utils.file-sys :refer [file-list]]))
 
 
 (defn no-ext
