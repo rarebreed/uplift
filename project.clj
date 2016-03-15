@@ -14,6 +14,13 @@
                  [org.seleniumhq.selenium/selenium-server "2.47.1"]
                  [org.clojure/core.match "0.3.0-alpha4"]
                  [prismatic/schema "1.0.1"]
-                 [org.clojure/tools.cli "0.3.3"]]
+                 [org.clojure/tools.cli "0.3.3"]
+                 [org.clojure/core.async "0.2.371"]
+                 [danlentz/clj-uuid "0.1.6"]
+                 [http-kit "2.1.18"]
+                 [cheshire "5.5.0"]
+                 [commando "0.1.2-SNAPSHOT"]
+                 [clj-time "0.11.0"]
+                 [org.testng "6.9.10"]]
 
   :main uplift.deploy)

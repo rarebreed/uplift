@@ -9,7 +9,7 @@
 
 (defn directory-seq
   "Returns a sequence of DirectoryStream entries"
-  [path]
+  [^String path]
   (let [p (varargs #(Paths/get %1 %2) path)
         ds (Files/newDirectoryStream p)]
     (for [d ds]
@@ -30,6 +30,89 @@
       (let [name (.toString (.getFileName d))
             _ (timbre/logf :info name)]
         name))))
+
+(defn file-list
+  [^String path]
+  (let [entries (directory-seq path)]
+    (list-files entries)))
+
+(defn path-name
+  [path]
+  (.toString (.getFileName path)))
+
+(defn leading-slash?
+  "Tests if a string has a leading slash"
+  [path]
+  (= \/ (first path)))
+
+
+(defn trailing-slash?
+  "Tests if a path has a trailing slash"
+  [path]
+  (= \/ (last path)))
+
+
+(defn add-trailing-slash
+  "Adds a trailing slash to a path"
+  [path]
+  (str path "/"))
+
+
+(defn remove-slash
+  "Removes trailing and/or leading slashes from a string
+
+  *Args*
+  - path: string to remove slashes
+  - leading?: if true, removes leading slash (if it exists)
+  - trailing?: if true, removes trailing slash"
+  [path & {:keys [leading? trailing?]
+           :or {leading? true trailing? true}}]
+  (letfn [(rm-first [x] (apply str (drop-while (fn [c] (= c \/)) x)))
+          (rm-last [x] (apply str (take-while (fn [c] (not= c \/)) x)))
+          (rm-both [x] ((comp rm-last rm-first) x))]
+    (match [(first path) (last path) leading? trailing?]
+           [\/ \/ true true] (rm-both path)
+           [\/ \/ true false] (rm-first path)
+           [\/ \/ false true] (rm-last path)
+           [\/ _ true _] (rm-first path)
+           [_ \/ _ true] (rm-last path)
+           :else path)))
+
+
+(defn remove-all-slash
+  "Removes all slashes including in the middle"
+  [path]
+  (->> (clojure.string/split path #"/") (clojure.string/join "")))
+
+
+(defn path-join
+  "Given a sequence of strings, join them together to form a path
+
+  The first element is the parent path, and may include a leading slash.  This indicates that it is an absolute
+  path.  If it does not start with a leading slash, then the path is considered relative to the working directory
+  If any other element has a preceding or trailing slash it will be removed from the path.
+  "
+  [& paths]
+  (let [parent (first paths)
+        parent (if (trailing-slash? parent)
+                 (apply str (butlast parent))
+                 parent)
+        tail (for [p (rest paths)]
+               (remove-slash p))
+        mkpath (partial cji/file parent)]
+    (-> (apply mkpath tail) .getPath)))
+
+
+(defn str->File
+  "Converts a string to a File"
+  [path]
+  (File. path))
+
+
+(defn path->file
+  ""
+  [path]
+  (last (clojure.string/split path #"/")))
 
 
 (defn file-exists?
