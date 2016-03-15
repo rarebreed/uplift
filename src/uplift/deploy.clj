@@ -14,9 +14,9 @@
 ;; 5. Install uplift to the VM
 ;;
 ;; Uplift agent tasks
-;; 1.
+;; 1. Install the ddnsclient for remote
 ;; 2. Get distro information
-;; 3. Install the ddnsclient for remote
+;; 3.
 ;; 4. Setup system time
 ;; 5. Install needed dependencies
 ;; 6. Setup hostname and ddns name
@@ -30,54 +30,34 @@
             [taoensso.timbre :as timbre]
             [uplift.core :as core]
             [uplift.core :as uc]
-            [uplift.command :refer [run ssh which]]
+            [commando.command :refer [launch ssh which]]
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.repos :as ur]
-            [schema.core :as s]))
+            [schema.core :as s]
+            [clojure.core.match :refer [match]]))
 
 (def config (ucr/get-configuration))
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
 
 
-(defprotocol DepInstall
-  "Functionality to install all needed dependencies for GUI testing"
-  (setup-repos [this])
-  (install-deps [this]))
-
-
-(defprotocol SystemSetup
-  "Functionality to call system services or other functionality"
-  (timectl [this])
-  (firewallctl [this]))
-
-
-(s/defrecord Distro
-             [name :- s/Str                                            ;; eg RHEL
-              version :- s/Str                                         ;; eg 7.2
-              hostname :- s/Str                                        ;; eg my.home.org
-              bld-version :- s/Str                                      ;; a build name eg RHEL-7.1-20140630
-              ]
-             )
-
-
 (defrecord RHEL7 [distro]
-  DepInstall
+  uplift.protos/SystemSetup
   (install-deps [this]
     nil)
 
-  SystemSetup
+  uplift.protos/SystemSetup
   (firewallctl [this])
   (timectl [this]))
 
 (defrecord RHEL6 [distro]
-  DepInstall)
+  uplift.protos/SystemSetup
+  (install-deps [this]
+    nil)
 
-(defn factory
-  "Returns a Distro"
-  [host]
-  (let [info nil])
-  )
+  uplift.protos/SystemSetup
+  (firewallctl [this])
+  (timectl [this]))
 
 
 (defn install-uplift
@@ -114,24 +94,75 @@
     (file-sys/get-remote-file candle src :dest dest)))
 
 
+(defn validate-system-arch
+  [host]
+  (let [base ["x86_64" "i386"]
+        {:keys [distributor-id major release arch] :as di} (uc/distro-info host)
+        distro (if (re-find #"RedHatEnterprise" distributor-id)
+                 (keyword (str "rhel" major))
+                 (keyword (str distributor-id release)))
+        valid (match distro
+                     :rhel7 base
+                     :rhel6 (conj base "ppc64"))]
+    (if (some (set [arch]) valid)
+      di
+      (throw (Exception. (format "%s not a valid arch for %s %s" (:arch di) distributor-id release))))))
+
+
+(defn set-aliases
+  "Adds 2 default aliases"
+  [host]
+  (uc/add-alias "rhsm-version" "rpm -qa | egrep \"python-rhsm|subscription\"" :host host)
+  (uc/add-alias "newrhsm" "yum -y update subscription-manager* python-rhsm" :host host))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
   1. Install repo file
   2. Install JVM
   3. Install leiningen"
-  [host version & {:keys [key-path auto-key-path]
-                   :or {key-path (get-in config [:config :ssh-pub-key])
-                        auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
-  ;(run "ssh-add")
+  [host & {:keys [key-path auto-key-path ddns-uuid ddns-name]
+           :or {key-path (get-in config [:config :ssh-pub-key])
+                auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
         copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
-        repo-install-res (ur/install-repos host version)
-        [_ major minor] (uc/check-java :host host)
+        [{:keys [variant distributor-id release major minor]
+          :as distro-info}] (uc/distro-info host)
+
+        ;; No point in continuing if we're not a supported arch
+        _ (validate-system-arch host)
+
+        ;; Create the nightly repo file so we can install dependencies
+        repo-install-res (ur/make-default-nightly-repo-file host :dest "/tmp/rhel")
+        _ (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d/")
+        _ (ur/enable-repos distro-info host)
+        _ (launch "yum -y install wget" :host host)
+
+        ;; install and configure redhat ddns
+        _ (when ddns-uuid
+            (uc/install-redhat-ddns :host host)
+            (uc/edit-ddns-hosts host ddns-name ddns-uuid)
+            (uc/ddns-client-enable host))
+
+        ;; Do system setup to control firewall, set system time, etc
+        system-res (uc/system-setup distro-info host)
+
+        ;; Set aliases and install dependencies
+        _ (launch "pip install python-image")
+        deps ["subscription-manager-migration*" "expect" "python-pip" "python-devel" "dogtail" "git"
+              "translate-toolkit"]
+        _ (uc/install-deps deps :host host)
+        _ (launch "pip install coverage" :host host)
+        _ (set-aliases host)
+
+        ;; Install java dependencies
+        [_ java-major java-minor] (uc/check-java :host host)
         install-jdk-res (cond
-                          (= major "0") (uc/install-jdk host 8)
-                          (= major "7") nil
-                          :else (timbre/logf :info (format "Java 1.%s_%s already installed" major minor)))
+                          (= java-major "0") (uc/install-jdk host 8)
+                          (= java-major "7") nil
+                          :else (timbre/logf :info (format "Java 1.%s_%s already installed" java-major java-minor)))
+
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
@@ -139,7 +170,9 @@
                              (if (-> lein-check :exit (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))
-        ;; Install uplift
+
+        ;; FIXME: we need to install uplift and pheidippides
         uplift-res (install-uplift host)]
     {:copy-key-res copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
-     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res}))
+     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res
+     :system-res system-res}))

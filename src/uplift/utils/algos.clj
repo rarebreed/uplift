@@ -1,4 +1,5 @@
-(ns uplift.utils.algos)
+(ns uplift.utils.algos
+  (:require [clojure.core.match :refer [match]]))
 
 (defn lmap
   "Sometimes you don't want to iterate through every item in a sequence
@@ -27,11 +28,20 @@
     (f arg (into-array t (if args args [])))))
 
 
-(defn bool
+(defmulti bool
+          "Truthiness multimethod.  As more types need to be truthified, add them to the cond"
+          (fn [x]
+                 (cond (= (type x) String) :string
+                       :else :number)))
+
+(defmethod bool :number
   [i]
-  (if (= i 0)
-    true
-    false))
+  (if (= i 0) true false))
+
+
+(defmethod bool :string
+  [i]
+  (if (= i "0") true false))
 
 
 (defn all? [coll]
@@ -48,3 +58,16 @@
   "A reverse comp that works from left to right"
   [& fns]
   (apply comp (reverse fns)))
+
+(def keywordize (comp
+                  keyword
+                  #(clojure.string/replace % #"\s+" "-")
+                  clojure.string/lower-case))
+
+(defn xor
+  "Exclusive OR"
+  [x y]
+  (match [x y]
+         [true true] false
+         [false false] false
+         :else true))

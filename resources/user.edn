@@ -1,0 +1,11 @@
+{:url-format #immucont/override ""                          ;; a format string for a repo file baseurl
+ :ssh-password #immuconf/override ""                        ;; root password for test machine
+ :ssh-pub-key #immuconf/override ""                         ;; path to master ssh public key
+ :ssh-pub-key-auto #immuconf/override ""                    ;; path to automation ssh public key
+ :ddns-client #immuconf/override ""
+ :candlepin #immuconf/override {:url ""                     ;; url for candlepin
+                                :user ""                    ;; username (basic-auth)
+                                :password ""                ;; password for user (basic auth)
+                                :admin ["" "" ""]
+                                :owner ""}                  ;; owner key
+ }

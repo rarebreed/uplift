@@ -1,11 +1,43 @@
 (ns uplift.utils.file-sys
-  (:require [uplift.command :as uc]
+  (:require [commando.command :as uc]
             [uplift.utils.algos :refer [varargs]]
-            [taoensso.timbre :as timbre])
+            [taoensso.timbre :as timbre]
+            [clojure.core.match :refer [match]]
+            [clojure.java.io :as cji]
+            [uplift.utils.log-config :as lc :refer [make-timestamped-file]])
   (:import [java.nio.file Files Paths]
-           [java.io File])
-  )
+           [java.io File]))
 
+(defn make-path
+  [path]
+  (Paths/get path (into-array String [])))
+
+
+(def str->Path
+  "Alias for make-path"
+  make-path)
+
+
+(defn delete-file
+  ([path]
+   (let [p (str->Path path)]
+     (try
+       (Files/delete p)
+       (catch Exception ex (format "Could not delete %s" path)))))
+  ([host path]
+    (uc/launch (format "rm -f %s" path) :host host) :throws? true))
+
+
+(defn path-info
+  "Gets commonly used info for a path given as a string. "
+  [path]
+  (let [p (make-path path)
+        f (.toFile p)]
+    {:file? (.isFile f)
+     :dir? (.isDirectory f)
+     :exists? (.exists f)
+     :parent (.getParent p)
+     :filename (.getFileName p)}))
 
 (defn directory-seq
   "Returns a sequence of DirectoryStream entries"
@@ -17,7 +49,9 @@
 
 
 (defn list-files
-  "Returns a listing of files in a directory"
+  "Returns a listing of files in a directory
+
+  Only works locally"
   [entries & filters]
   (let [filters (if (nil? filters)
                   [(fn [_] true)]
@@ -119,8 +153,8 @@
   [^String fpath & {:keys [host]}]
   (if host
     (let [cmd (format "ls -al %s" fpath)
-          result (uc/ssh  host cmd)]
-      (if (= 0 (:exit result)) true false))
+          result (uc/launch cmd :host host)]
+      (if (= 0 (:status result)) true false))
     (.exists (File. fpath))))
 
 
@@ -131,18 +165,15 @@
     (file-exists? repo-path :host host)))
 
 
-(defn path-name
-  [path]
-  (.toString (.getFileName path)))
-
-
 (defn get-remote-file
   "Gets a remote file"
-  [host src & {:keys [user dest]
-               :or {user "root" dest "."}}]
+  [host src & {:keys [user dest clean?]
+               :or {user "root" dest "." clean? true}}]
   (let [temp "scp %s@%s:%s %s"
-        cmd (format temp user host src dest)]
-    (uc/run cmd)))
+        cmd (format temp user host src dest)
+        _ (uc/launch cmd :throws? true)
+        info (path-info src)]
+    (path-join dest (.toString (:filename info)))))
 
 
 (defn send-file-to
@@ -150,4 +181,28 @@
                :or {user "root" dest ""}}]
   (let [temp "scp %s %s@%s:%s"
         cmd (format temp src user host dest)]
-    (uc/run cmd)))
+    (uc/launch cmd :throws? true)))
+
+
+(defn make-backup
+  "Checks to see if a file exists named by orig.
+
+  If it finds an alternative file ending, it will generate a timestamped new ending"
+  [fpath & {:keys [host]}]
+  (let [{:keys [filename parent]} (path-info fpath)
+        [orig dir] (for [d [filename parent]]
+                     (.toString d))
+        orig-patt (re-pattern (format "^%s(\\..*)*" orig))
+        entries (-> (uc/launch (str "ls -A " dir) :host host) :output (clojure.string/split #"\n"))
+        m (for [e entries]
+            (re-matches orig-patt e))
+        matched (-> (filter #(not (nil? %)) m) sort)
+        fullpath (path-join dir orig)
+        _ (when (empty? matched)
+            (throw (Exception. (format "%s does not exist" fullpath))))
+        ts (lc/make-timestamp)
+        backup (str (first (first matched)) "." ts)
+        backup-path (path-join dir backup)]
+    ;; copy /dir/orig to /dir/ts
+    {:all m :matches matched :ts backup :fullpath fullpath :backup backup-path
+     :result (uc/launch (format "cp %s %s" fullpath backup-path) :host host)}))

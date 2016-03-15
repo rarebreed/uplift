@@ -61,7 +61,7 @@
   (map #(vector % %2) (iterate inc 0) coll))
 
 
-(defn find-lines
+(defn get-conf-key
   "Takes a vector map (as returned from get-conf-file) a key to search for and a section
    Returns a sequence of 2 element vectors [index line] in which the :line of the map element
    matches key argument
@@ -73,7 +73,7 @@
      [[27 {:section \"fedora-source\", :line \"#enabled=1\", :comment \"#\", :key \"enabled\", :delimiter \"=\", :value \"1\"}]]
      (validate indexed)"
   ([coll key]
-    (find-lines coll key ""))                               ;; default is no sections
+    (get-conf-key coll key ""))                               ;; default is no sections
   ([coll key section]
    (let [indexed (indexer coll)
          matcher (fn [[_ line]]
@@ -128,7 +128,8 @@
     (nth (last found) 0)))
 
 
-(defn set-conf-entries
+(defn set-conf-key
+  "Takes a vmap (as returned from get-conf-file) a line number to change, "
   [vmap line-no entry mod]
   (if (= mod :modify)
     (mod-vmap vmap [line-no entry])
@@ -136,14 +137,27 @@
 
 
 (defn set-conf-file
-  "Reads in an existing conf file, and tries to find "
-  [file key value & {:keys [uncomment? section delimeter newfile]
+  "Reads in an existing conf file, and tries to set new value for key
+
+  If the key does not exist, it will write the key-val pair at the end of section.  Note that this function does not
+  actually edit the file in place.  It returns a vmap which in turn can be used to write a new config file
+
+  *Args*
+  - file: path to conf file
+  - key: key to look up
+  - value: value to set the key to
+  - uncomment?: if key-val is found but is commented out...uncomment the line
+  - section: section the key must belong to
+  - delimeter: tje separator between key and value
+  - newfile: path to where modified file will be written"
+  [file key value & {:keys [uncomment? section delimeter]
                      :or   {uncomment? true
                             section    "DEFAULT"
-                            delimeter  "="
-                            newfile    (str file ".new")}}]
+                            delimeter  "="}}]
   (let [vmap (get-conf-file file)                              ;; vector of entries from conf file
-        found (validate-entries (find-lines vmap key section)) ;; indexed vec of vec of matches on key/section
+        found (validate-entries (get-conf-key vmap key section)) ;; indexed vec of vec of matches on key/section
+        ;; FIXME: make it so that if section is nil, it will change all keys in any section
+        ;; (ie, do it in a doseq or map)
         uncommented (first (get-uncommented-entry found))
         delim (cond
                 uncommented (do
@@ -164,7 +178,7 @@
         newline (str key delim value)
         entry {:section section :line newline :comment nil :key key :delimiter delim :value value}
         mod (if uncommented :modify :insert)]
-    (set-conf-entries vmap line-no entry mod)))
+    (set-conf-key vmap line-no entry mod)))
 
 
 (defn quoter
@@ -184,11 +198,14 @@
            [_ \"] (apply str (butlast line)))))
 
 
-(defn set-grub-cmdline
+(defmulti set-grub-cmdline (fn [x] (:version x)))
+
+
+(defmethod set-grub-cmdline :rhel7
   [path]
   (let [grub-conf (get-conf-file path)
         modify (fn [[key val]]
-                 (let [matches (find-lines grub-conf key)   ;; find matches in grub-conf based on key
+                 (let [matches (get-conf-key grub-conf key)   ;; find matches in grub-conf based on key
                        uncommented (first (get-uncommented-entry matches)) ;; find first uncommented match (if any)
                        none-found? (not uncommented)        ;; determines if we modify or insert into grub-conf
                        line-match (if none-found?
@@ -209,15 +226,21 @@
                       (println item)
                       (let [[not-found? [index entry]] item
                             mod (if not-found? :insert :modify)]
-                        (set-conf-entries vmap index entry mod)))]
+                        (set-conf-key vmap index entry mod)))]
     (reduce set-entries grub-conf newentries)))
+
+(defn get-sections
+  "Returns a vec of all the sections in a config file"
+  [cfg-file]
+  (let [vmap (get-conf-file cfg-file)]
+    (vec (set (map :section vmap)))))
 
 
 (comment
   ;(require '[uplift.core :as uc])
   (require '[clojure.pprint :as cpp])
   ;(def vmap (get-conf-file "/home/stoner/copy.repo"))
-  (def final (set-conf-file "/home/stoner/copy.repo" "enabled" 1 :section "fedora-source"))
+
   (def f2 (set-conf-file "/home/stoner/copy.repo" "enabled" 1))
   (vec-to-file (set-grub-cmdline "/tmp/grub") "/tmp/newgrub")
   )

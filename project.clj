@@ -23,4 +23,5 @@
                  [clj-time "0.11.0"]
                  [org.testng "6.9.10"]]
 
-  :main uplift.deploy)
+  :java-source-paths ["src"]
+  :aot :all)
