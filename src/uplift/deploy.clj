@@ -28,36 +28,18 @@
 (ns uplift.deploy
   (:require [clj-webdriver.taxi :as cwt]
             [taoensso.timbre :as timbre]
-            [uplift.core :as core]
             [uplift.core :as uc]
+            [uplift.distro :as udis]
             [commando.command :refer [launch ssh which]]
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.repos :as ur]
             [schema.core :as s]
-            [clojure.core.match :refer [match]]))
+            [clojure.core.match :refer [match]]
+            [uplift.protos :as uprotos]))
 
 (def config (ucr/get-configuration))
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
-
-
-(defrecord RHEL7 [distro]
-  uplift.protos/SystemSetup
-  (install-deps [this]
-    nil)
-
-  uplift.protos/SystemSetup
-  (firewallctl [this])
-  (timectl [this]))
-
-(defrecord RHEL6 [distro]
-  uplift.protos/SystemSetup
-  (install-deps [this]
-    nil)
-
-  uplift.protos/SystemSetup
-  (firewallctl [this])
-  (timectl [this]))
 
 
 (defn install-uplift
@@ -73,7 +55,7 @@
                                                  (uc/install-devtools host))
                               clone-result (when-not (file-sys/file-exists? parent-dir)
                                              (ssh host (format "mkdir -p %s" parent-dir))
-                                             (core/git-clone host uplift-git)
+                                             (uc/git-clone host uplift-git)
                                              (ssh host (format "mv uplift %s" parent-dir)))]
                           (ssh host (format "cd %s; lein deps" uplift-dir))))]
     {:result uplift-result :parent-dir parent-dir :uplift-dir uplift-dir}))
@@ -97,7 +79,7 @@
 (defn validate-system-arch
   [host]
   (let [base ["x86_64" "i386"]
-        {:keys [distributor-id major release arch] :as di} (uc/distro-info host)
+        {:keys [distributor-id major release arch] :as di} (udis/distro-info host)
         distro (if (re-find #"RedHatEnterprise" distributor-id)
                  (keyword (str "rhel" major))
                  (keyword (str distributor-id release)))
@@ -116,6 +98,36 @@
   (uc/add-alias "newrhsm" "yum -y update subscription-manager* python-rhsm" :host host))
 
 
+(defn get-ldtp-repo
+  [host]
+  (let [ldtp-repo (-> (:config (ucr/get-configuration)) :ldtp-repo-path)
+        repo-file (slurp ldtp-repo)]
+    (spit "/etc/yum.repos.d/ldtp.repo" repo-file)
+    (ur/set-repo-enable "/etc/yum.repos.d/ldtp.repo" "ldtp" true)))
+
+
+(defn system-setup
+  [distro-info host]
+  (let [rhel-type (udis/rhel-factory distro-info host)]
+    (uprotos/time-setup rhel-type)
+    (uprotos/disable-firewall rhel-type)))
+
+
+(defn disable-gnome-initial-setup
+  "Not sure if this works.  Tries to eliminate the gnome3 splash screen"
+  [host]
+  (let [distro (udis/distro-info host)
+        _ (launch "mkdir -p /etc/skel/.config" :throws false :host host)
+        _ (launch "mkdir -p /root/.config" :throws false :host host)
+        skel-path "/etc/skel/.config/gnome-initial-setup-done"
+        root-path "/root/.config/gnome-initial-setup-done"
+        check-n-send #(when-not (file-sys/file-exists? %1 :host host)
+                       (spit "/tmp/gnome-initial-setup-done" "yes")
+                       (file-sys/send-file-to host "/tmp/gnome-initial-setup-done" :dest %2))]
+    (check-n-send skel-path "/etc/skel/.config")
+    (check-n-send root-path "/root/.config")))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
@@ -127,15 +139,17 @@
                 auto-key-path (get-in config [:config :ssh-pub-key-auto])}}]
   (let [copy-key-res (uc/copy-ssh-key host :key-path key-path)
         copy-autokey-res (uc/copy-ssh-key host :key-path auto-key-path)
-        [{:keys [variant distributor-id release major minor]
-          :as distro-info}] (uc/distro-info host)
-
-        ;; No point in continuing if we're not a supported arch
-        _ (validate-system-arch host)
+        distro-info (udis/distro-info host)
 
         ;; Create the nightly repo file so we can install dependencies
-        repo-install-res (ur/make-default-nightly-repo-file host :dest "/tmp/rhel")
-        _ (file-sys/send-file-to host "/tmp/rhel-latest.repo" :dest "/etc/yum.repos.d/")
+        latest-repo "/tmp/rhel-latest.repo"
+        _ (if (file-sys/file-exists? latest-repo)
+            (file-sys/delete-file latest-repo))
+        opts-fmt (if (= 7 (:major distro-info))
+                   "%s-optional"
+                   "%s/optional")
+        repo-install-res (ur/make-default-nightly-repo-file host :dest latest-repo :opt opts-fmt :di distro-info)
+        _ (file-sys/send-file-to host latest-repo :dest "/etc/yum.repos.d/")
         _ (ur/enable-repos distro-info host)
         _ (launch "yum -y install wget" :host host)
 
@@ -146,15 +160,22 @@
             (uc/ddns-client-enable host))
 
         ;; Do system setup to control firewall, set system time, etc
-        system-res (uc/system-setup distro-info host)
+        system-res (system-setup distro-info host)
+
+        ;; No point in continuing if we're not a supported arch
+        _ (validate-system-arch host)
 
         ;; Set aliases and install dependencies
-        _ (launch "pip install python-image")
+        ; _ (launch "pip install python-pillow")
         deps ["subscription-manager-migration*" "expect" "python-pip" "python-devel" "dogtail" "git"
               "translate-toolkit"]
         _ (uc/install-deps deps :host host)
         _ (launch "pip install coverage" :host host)
         _ (set-aliases host)
+
+        ;; disable the gnome3 splash screen
+        _ (when (= 7 (:major distro-info))
+            (disable-gnome-initial-setup host))
 
         ;; Install java dependencies
         [_ java-major java-minor] (uc/check-java :host host)
@@ -166,13 +187,14 @@
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
-                           (let [lein-check (ssh host "lein version")]
-                             (if (-> lein-check :exit (= 0))
+                           (let [lein-check (launch "lein version" :host host)]
+                             (if (-> lein-check :status (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))
 
         ;; FIXME: we need to install uplift and pheidippides
-        uplift-res (install-uplift host)]
+        ;uplift-res (install-uplift host)
+        ]
     {:copy-key-res copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
-     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res
+     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res nil
      :system-res system-res}))

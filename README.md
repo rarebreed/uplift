@@ -8,6 +8,13 @@ Currently uplift is just a pile of libraries to help provision a system for test
 manager and candlepin.  It is focused on developer/ad-hoc testing so that tests can become semi-
 automated.
 
+Use case scenarios:
+
+- Provisioning a development system for GUI testing
+- Helper libraries to read and write config files
+- Helper libraries for sending/getting remote files
+
+
 ## Roadmap
 
 - Helper Tools
@@ -20,17 +27,16 @@ automated.
     - ~~The clojure commons exec appears to have this, and the ssh might too~~
     - Need to pump the stdout back across a websocket or socket if remote
     - Need to save output to StringBuilder or something like it
-  - /var/log/rhsm/rhsm.log monitor
-    - Mechanism to write logic to send event when something of interest is seen
-- Create an agent that uses messaging system
-  - low-level binary message exchange and edn
-  - Transport over TLS encrypted socket
+  - ~~/var/log/rhsm/rhsm.log monitor~~ (Moved to [commando][commando])
+    - ~~Mechanism to write logic to send event when something of interest is seen~~
+- ~~Create an agent that uses messaging system~~ (Moved to [pheidippides][pdd])
+  - ~~low-level binary message exchange and edn~~
+  - ~~Transport over TLS encrypted socket~~
 - Improved way to do development and one-off tests
   - Use Cases:
     - Make it easier for people not familiar with clojure to run a test
     - Make it easier to test development code (nightlies)
 	- ~~Improve runtestng (run tests from the repl)~~
-  - Figure out a way to separately compile the java classes into a jar
   - Make it easy for others to kick off a test (not through jenkins)
     - ~~Be able to select a test within an xml suite file~~
     - web interface to setup automation.properties
@@ -44,7 +50,6 @@ automated.
     - Provide a list of URLs for network installs
 
 Other possibilities
-  - JNI/JNA/JNR bindings for at-spi2-core (libatspi)?
   - Java dbus hooks to notify remote user of dbus events?
   - Packaged in a way that can be AOT compiled so it can be used by other JVM languages
 
@@ -85,3 +90,5 @@ Copyright © 2015 FIXME
 
 Distributed under the Apache2 Public License
 
+[commando]: https://github.com/rarebreed/commando
+[pdd]: https://github.com/rarebreed/pheidippides

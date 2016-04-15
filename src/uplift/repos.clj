@@ -6,7 +6,7 @@
             [uplift.utils.file-sys :as file-sys]
             [uplift.config.reader :as ucr]
             [uplift.config :as ucfg]
-            [uplift.core :as uco]
+            [uplift.distro :as ud]
             [commando.command :as cmdr :refer [launch]]
             [taoensso.timbre :refer [log]]
             [uplift.utils.log-config]
@@ -261,17 +261,18 @@
 (defn make-default-nightly-repo-file
   "Creates a nightly repo file.  Since it uses make-yum-repo, it will use the baseurl from the
   user.edn file for formatting"
-  [host & {:keys [fpath clear dest opt]
+  [host & {:keys [fpath clear dest opt di]
            :or {fpath "/etc/yum.repos.d/rhel-latest.repo"
                 clear false
                 opt "%s/optional"}}]
   (if (file-sys/file-exists? fpath :host host)
     "rhel-latest.repo already exists"
-    (let [{:keys [variant major]} (uco/distro-info host)
-          ver (format "latest-RHEL-%d" major)
+    (let [{:keys [variant major]} (if di di (ud/distro-info host))
+          ver (format "latest-RHEL-%s" major)
           section (format "[latest-rhel-%d-nightly]" major)
+          section-opts (format "[latest-rhel-%d-nightly-opts]" major)
           nightly (make-yum-repo :nightly ver section :flavor variant)
-          nightly-opts (make-yum-repo :nightly ver section :flavor (format opt variant))]
+          nightly-opts (make-yum-repo :nightly ver section-opts :flavor (format opt variant))]
       (write-to-config nightly dest)
       (write-to-config nightly-opts dest))))
 
@@ -323,3 +324,21 @@
         (doseq [s sections]
           (set-repo-enable r s false))
         (file-sys/send-file-to host r :dest repo-path)))))
+
+
+(defn setup-auto-7
+  [rhel-type]
+  (let [host (:host rhel-type)
+        ldtp-repo (-> (ucr/get-configuration) :configuration :ldtp-repo-path)
+        contents (slurp ldtp-repo)
+        yum-repo "/etc/yum.repos.d/ldtp.repo"]
+    (spit yum-repo contents)
+    (set-repo-enable yum-repo "ldtp" true)
+    (when-not (uc/package-installed? "yum-utils" :host host)
+      (uc/install-deps ["yum-utils"] :host host))
+    (let [tkurl (launch "yumdownloader tkinter --urls" :host host)
+          arch (:arch rhel-type)
+          patt (re-pattern (format "^(.+)%s\\.rpm" arch))
+          matches (re-find patt (:output tkurl))]
+      )
+    ))

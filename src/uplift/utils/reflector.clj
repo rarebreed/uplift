@@ -38,8 +38,8 @@
   "Creates a map with 4 keys: acceptance, tier1, tier2, and tier3
 
   If a defn belongs to one of these groups, it will be stores in a vector"
-  [& {:keys [g]
-      :or   {g (get-groups)}}]
+  [path & {:keys [g]
+      :or   {g (get-groups path)}}]
   (letfn [(updater [curr-val new-val]
             (if (nil? curr-val)
               [new-val]

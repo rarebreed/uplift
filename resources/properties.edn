@@ -9,4 +9,5 @@
  :dependencies
    {:rhel7 []
     :rhel6 []}
+ :ldtp-repo-path #immuconf/override ""                      ;; path to ldtp rpms
  }

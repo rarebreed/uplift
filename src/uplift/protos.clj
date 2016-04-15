@@ -7,5 +7,6 @@
 
 (defprotocol SystemSetup
   "Functionality to call system services or other functionality"
-  (timectl [this])
-  (firewallctl [this]))
+  (disable-firewall [this])
+  (time-setup [this])
+  (setup-automation-command-server [this]))
