@@ -177,11 +177,11 @@
 
 
 (defn send-file-to
-  [host src & {:keys [user dest]
-               :or {user "root" dest ""}}]
+  [host src & {:keys [user dest overwrite]
+               :or {user "root" dest "" overwrite true}}]
   (let [temp "scp %s %s@%s:%s"
         cmd (format temp src user host dest)]
-    (uc/launch cmd :throws? true)))
+    (uc/launch cmd :throws? (not overwrite))))
 
 
 (defn make-backup

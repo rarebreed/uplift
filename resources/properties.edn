@@ -10,4 +10,7 @@
    {:rhel7 []
     :rhel6 []}
  :ldtp-repo-path #immuconf/override ""                      ;; path to ldtp rpms
+ :vncserver-path #immuconf/override ""                      ;; path to vncserver@.service file
+ :start-ldtpd #immuconf/override ""                         ;; path to the start-ldtpd.sh script
+ :gnome-desktop #immuconf/override ""                       ;; path
  }

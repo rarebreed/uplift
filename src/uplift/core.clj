@@ -243,8 +243,8 @@
 
 (defn ddns-client-enable
   [host]
-  (cmdr/launch "/usr/bin/redhat-ddns-client enable" :host host)
-  (cmdr/launch "/usr/bin/redhat-ddns-client" :host host))
+  (cmdr/launch "/usr/bin/redhat-ddns-client" :host host)
+  (cmdr/launch "/usr/bin/redhat-ddns-client enable" :host host))
 
 
 (defn add-alias
@@ -312,3 +312,9 @@
         result (launch cmd :host host :throws? false)
         status (:status result)]
     (= 0 status)))
+
+
+(defn set-gconftool2
+  [^String key ^String vtype ^String val & {:keys [host]}]
+  (-> (format "gconftool-2 --set %s --type=%s %s" key vtype val)
+      (launch :host host)))

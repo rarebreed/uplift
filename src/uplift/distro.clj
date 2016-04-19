@@ -3,8 +3,10 @@
             [commando.command :refer [launch]]
             [cheshire.core :as ches]
             [taoensso.timbre :as timbre]
+            [uplift.core :as uc]
             [uplift.protos :as protos]
-            [uplift.utils.algos :refer [keywordize]])
+            [uplift.utils.algos :refer [keywordize]]
+            [uplift.config.reader :as ucr])
   (:import (uplift.protos SystemSetup)))
 
 
@@ -66,7 +68,7 @@
     :minor minor release (as integer)}"
   [host]
   (try
-    (let [info (-> (launch "lsb_release -a" :host host :throws true) :output)
+    (let [info (-> (launch "lsb_release -a" :host host :throws true :show-out? false) :output)
           pattern "^%s:\\s*(.*)$"
           variant-patt #"\w+(Server|Client|Workstation)\w*"
           ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
@@ -98,6 +100,96 @@
       (yum->Distro (yum-base host)))))
 
 
+(defn configure-vncserver
+  "Pulls down vncserver file"
+  ([host cfg-file-path]
+   (let [config (slurp cfg-file-path)
+         tmp "/tmp/vncserver@:2.service"
+         dest "/etc/systemd/system/vncserver@:2.service"]
+     (spit tmp config)
+     (file-sys/send-file-to host tmp :dest dest)))
+  ([host]
+   (configure-vncserver host (-> (ucr/get-configuration) :vncserver-path))))
+
+(defn vncpasswd
+  [host]
+  (when-not (file-sys/file-exists? "/root/.vnc/passwd" :host host)
+    (let [cmd "vncpasswd << EOF\npassword\npassword\nEOF"]
+      (launch cmd :host host))))
+
+(defn xstartup
+  [host]
+  (when-not (file-sys/file-exists? "/root/.vnc/xstartup")
+    (letfn [(launch+ [cmd] (launch cmd :host host))]
+      (launch+ "vncserver :2")
+      (Thread/sleep 10000)
+      (launch+ "vncserver -kill :2")
+      (Thread/sleep 10000))))
+
+(defn autostart
+  [host]
+  (when-not (file-sys/file-exists? "/root/.config/autostart")
+    (launch "mkdir -p /root/.config/autostart" :host host)))
+
+
+(defn start-ldtpd
+  [host]
+  (let [root "/root/bin"
+        script "/start-ldtpd.sh"
+        exists? #(file-sys/file-exists? % :host host)]
+    (when-not (exists? root)
+      (launch (format "mkdir -p %s" root)))
+    (when-not (exists? (str root script))
+      (let [ldtpd (-> (ucr/get-configuration) :config :start-ldtpd)]
+        (spit (str root script) (slurp ldtpd))))))
+
+
+(defn gnome-terminal-desktop
+  [host]
+  (let [path "/root/.config/autostart"
+        f "/gnome-terminal.desktop"
+        e? #(file-sys/file-exists? % :host host)]
+    (when-not (e? path)
+      (launch (format "mkdir -p %s" path)))
+    (when-not (e? (str path f))
+      (let [desktop (-> (ucr/get-configuration) :config :gnome-desktop)]
+        (spit (str path f) (slurp desktop))))))
+
+(defn final-vnc-start-7
+  [host]
+  (letfn [(call [cmd] (launch cmd :host host :throws? false))]
+    (call "killall -9 Xvnc")
+    (call "rm -f /tmp/.X2-lock")
+    (call "rm -f /tmp/.X11-unix/X2")
+    (call "gsettings set org.gnome.desktop.session session-name gnome-classic")))
+
+
+(defn final-vnc-start-6
+  [host]
+  (let [servers (:output (launch "ls -A /etc/sysconfig/vncservers"))
+        setting "VNCSERVERS=\"2:root\""
+        matches (re-find (re-pattern setting) servers)]
+    (when (empty? matches)
+      (let [tmp "/tmp/vncservers"]
+        (spit tmp setting)
+        (file-sys/send-file-to host tmp :dest "/etc/sysconfig/vncservers"))
+      (launch "chkconfig vncserver on" :host host)
+      (launch "service vncserver restart" :host host))))
+
+
+(defn gnome-configuration
+  [host]
+  (let [settings [["/apps/gnome-session/options/show_root_warning" "boolean" "false"]
+                  ["/apps/gnome-screensaver/idle_activation_enabled" "boolean" "false"]
+                  ["/apps/gnome-power-manager/ac_sleep_display" "int" 0]]]
+    (vec (for [args settings]
+           (apply uc/set-gconftool2 (flatten (conj args [:host host])))))))
+
+(defn common-setup
+  [host]
+  (vec (for [fnc [vncpasswd xstartup autostart start-ldtpd gnome-terminal-desktop]]
+         (fnc host))))
+
 (defrecord RHEL6
   [distro host]
 
@@ -114,7 +206,11 @@
                 "systemctl start ntpd.service"
                 "systemctl enable ntpd.service"]]
       (list (for [cmd cmds]
-              (launch+ cmd))))))
+              (launch+ cmd)))))
+
+  (protos/start-vncserver [this]
+    (common-setup (:host this))
+    (final-vnc-start-6 (:host this))))
 
 (defrecord RHEL7
   [distro host]
@@ -138,7 +234,16 @@
                     "systemctl start ntpd.service"
                     "systemctl enable ntpd.service"]]
           (list (for [cmd cmds]
-                  (launch+ cmd))))))))
+                  (launch+ cmd)))))))
+
+  (protos/start-vncserver [this]
+    (let [host (:host this)
+          launch+ #(launch % :host host)]
+      (for [cmd ["systemctl daemon-reload"
+                 "systemctl enable vncserver@:2.service"]]
+        (launch+ cmd))
+      (common-setup host)
+      (final-vnc-start-7 host))))
 
 (defn rhel-factory
   [distro-info host]

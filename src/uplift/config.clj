@@ -48,7 +48,7 @@
             grps))))))
 
 
-(defn vec-to-file
+(defn seq-to-file
   "Takes a vector of maps (as returned from get-conf-file) and turns it into a file "
   [vecmap fpath]
   (with-open [newfile (cjio/writer fpath)]
@@ -236,12 +236,28 @@
     (vec (set (map :section vmap)))))
 
 
+(defn edit-section
+  [vmap orig-sect new-sect]
+  (let [fmt #(format "[%s]" %)]
+    (for [line vmap]
+      (let [fmt-orig (fmt orig-sect)
+            fmt-new (fmt new-sect)
+            vline (:line line)
+            vsection (:section line)]
+        (cond
+          (and (= vline fmt-orig)
+               (= vsection orig-sect)) (-> (assoc line :section new-sect)
+                                           (assoc :line fmt-new))
+          (= vsection orig-sect) (assoc line :section new-sect)
+          :else line)))))
+
+
 (comment
   ;(require '[uplift.core :as uc])
   (require '[clojure.pprint :as cpp])
   ;(def vmap (get-conf-file "/home/stoner/copy.repo"))
 
   (def f2 (set-conf-file "/home/stoner/copy.repo" "enabled" 1))
-  (vec-to-file (set-grub-cmdline "/tmp/grub") "/tmp/newgrub")
+  (seq-to-file (set-grub-cmdline "/tmp/grub") "/tmp/newgrub")
   )
 

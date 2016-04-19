@@ -36,7 +36,8 @@
             [uplift.repos :as ur]
             [schema.core :as s]
             [clojure.core.match :refer [match]]
-            [uplift.protos :as uprotos]))
+            [uplift.protos :as uprotos]
+            [uplift.distro :as ud]))
 
 (def config (ucr/get-configuration))
 (def uplift-git "https://github.com/RedHatQE/uplift.git")
@@ -149,7 +150,8 @@
                    "%s-optional"
                    "%s/optional")
         repo-install-res (ur/make-default-nightly-repo-file host :dest latest-repo :opt opts-fmt :di distro-info)
-        _ (file-sys/send-file-to host latest-repo :dest "/etc/yum.repos.d/")
+        _ (when-not repo-install-res
+            (file-sys/send-file-to host latest-repo :dest "/etc/yum.repos.d/"))
         _ (ur/enable-repos distro-info host)
         _ (launch "yum -y install wget" :host host)
 
@@ -187,14 +189,25 @@
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
-                           (let [lein-check (launch "lein version" :host host)]
+                           (let [lein-check (launch "lein version" :host host :env "LEIN_ROOT=1")]
                              (if (-> lein-check :status (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))
 
+        ;; Install repos for all the vnc server related deps
+        rhel-type (ud/rhel-factory distro-info host)
+        _ (ur/setup-auto-server-deps rhel-type)
+
+        ;; configure vncserver settings
+        _ (ud/configure-vncserver)
+
+        ;; Start the vncserver
+        _ (uprotos/start-vncserver rhel-type)
+
         ;; FIXME: we need to install uplift and pheidippides
-        ;uplift-res (install-uplift host)
-        ]
-    {:copy-key-res copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
-     :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res nil
-     :system-res system-res}))
+        uplift-res (install-uplift host)
+        final-res {:copy-key-res     copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
+                   :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res
+                   :system-res       system-res}]
+    (timbre/info "=========== Setup is complete!! ==================")
+    (timbre/info final-res)))

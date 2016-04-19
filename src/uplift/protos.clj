@@ -7,6 +7,6 @@
 
 (defprotocol SystemSetup
   "Functionality to call system services or other functionality"
-  (disable-firewall [this])
-  (time-setup [this])
-  (setup-automation-command-server [this]))
+  (disable-firewall [this] "Disables firewall on the system")
+  (time-setup [this] "Sets up ntpd")
+  (start-vncserver [this] "Starts the vnc-server"))

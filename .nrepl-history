@@ -4,3 +4,10 @@ exit
 (doc def)
 (require '[uplift.core :as uc])
 exit
+(conj [1 2] 3)
+(cons 3 [1 2])
+(conj '(1 2) 3)
+(cons 3 '(1 2))
+(conj [1 2] [3 4])
+(flatten (conj [1 2] [3 4]))
+quit
