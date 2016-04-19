@@ -3,7 +3,7 @@
                  "Red Hat Subscription Manager testing")
   :url "https://github.com/RedHatQE/uplift"
   :license {:name "Eclipse Public License"
-            :url "http://www.eclipse.org/legal/epl-v10.html"}
+            :url  "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [clj-ssh "0.5.11"]
                  [commons-net "3.3"]
@@ -26,5 +26,6 @@
   :repositories [["jcenter" "http://jcenter.bintray.com"]]
 
   :java-source-paths ["src"]
-  :aot :all)
+  ;:aot :all
+  )
 

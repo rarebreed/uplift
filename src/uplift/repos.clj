@@ -19,6 +19,8 @@
 (def user-config (:user-config devconfig))
 (def config (:config devconfig))
 (def url-format (get config :url-format))
+(def rh6-ldtp-repo-path
+  "http://download.opensuse.org/repositories/home:/anagappan:/ldtp2:/rpm/RHEL_6/home:anagappan:ldtp2:rpm.repo")
 
 (defn install-epel
   [distro-info host]
@@ -233,7 +235,7 @@
         work-copy (if local-repo local-repo repo)
         copy-src (if local-repo local-repo dest-path)
         cmap (ucfg/set-conf-file work-copy key value :section section)
-        edited-repo (ucfg/vec-to-file cmap copy-src)]
+        edited-repo (ucfg/seq-to-file cmap copy-src)]
     (if host
       (file-sys/send-file-to host work-copy :dest dest-path)
       edited-repo)))
@@ -326,19 +328,43 @@
         (file-sys/send-file-to host r :dest repo-path)))))
 
 
-(defn setup-auto-7
+(defn get-ldtp-repo
+  [ldtp-repo & {:keys [dest]}]
+  (let [contents (slurp ldtp-repo)
+        yum-repo (if dest dest "/tmp/ldtp.repo")]
+    (if (file-sys/file-exists? yum-repo)
+      (file-sys/delete-file yum-repo))
+    (spit yum-repo contents)))
+
+
+(defn repo7
+  [host yr dest repo-path]
+  (when-not (file-sys/file-exists? yr :host host)
+    (get-ldtp-repo repo-path :dest dest)))
+
+(defn repo6
+  [host yr dest repo-path]
+  (repo7 host yr dest repo-path)
+  (let [vmap (-> (ucfg/get-conf-file dest)
+                 (ucfg/edit-section "home_anagappan_ldtp2_rpm" "ldtp"))]
+    (file-sys/delete-file dest)
+    (ucfg/seq-to-file vmap "/tmp/ldtp.repo")))
+
+
+(defn setup-auto-server-deps
   [rhel-type]
   (let [host (:host rhel-type)
-        ldtp-repo (-> (ucr/get-configuration) :configuration :ldtp-repo-path)
-        contents (slurp ldtp-repo)
-        yum-repo "/etc/yum.repos.d/ldtp.repo"]
-    (spit yum-repo contents)
-    (set-repo-enable yum-repo "ldtp" true)
-    (when-not (uc/package-installed? "yum-utils" :host host)
-      (uc/install-deps ["yum-utils"] :host host))
-    (let [tkurl (launch "yumdownloader tkinter --urls" :host host)
-          arch (:arch rhel-type)
-          patt (re-pattern (format "^(.+)%s\\.rpm" arch))
-          matches (re-find patt (:output tkurl))]
-      )
-    ))
+        tmp-path "/tmp/ldtp.repo"
+        yum-repo "/etc/yum.repos.d/ldtp.repo"
+        deps ["ldtp" "python-ldtp" "python-twisted-*" "tk" "tkinter" "*vnc-server"]]
+    (if-not (file-sys/file-exists? yum-repo :host (:host rhel-type))
+      (let [[func repo-path] (cond
+                               (-> (:distro rhel-type) :major (= 7)) [repo7 (:ldtp-repo-path config)]
+                               (-> (:distro rhel-type) :major (= 6)) [repo6 rh6-ldtp-repo-path])]
+        (func host yum-repo tmp-path repo-path)))
+    (set-repo-enable tmp-path "ldtp" true)
+    (file-sys/send-file-to host tmp-path :dest yum-repo)
+    (uc/install-deps deps :host host)
+    (when (empty? (filter #(re-find #"vnc-server" %) (uc/list-packages :host host)))
+      (throw (Exception. "vnc-server package did not install")))
+    (uc/set-gconftool2 "/desktop/gnome/interface/accessibility" "boolean" "true" :host host)))

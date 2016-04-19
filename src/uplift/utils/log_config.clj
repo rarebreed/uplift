@@ -19,6 +19,20 @@
   (let [ts (make-timestamp)]
     (str base "-" ts suffix)))
 
+(defn timbre-mw
+  "Reduces the namespace output"
+  [data-map]
+  (let [ns-info (:?ns-str data-map)
+        parts (clojure.string/split ns-info #"\.")
+        ns-partial (clojure.string/join "." (map #(first %) (butlast parts)))
+        ns-to-use (str ns-partial "." (last parts))]
+    (assoc data-map :?ns-str ns-to-use)))
+
+
+(defn timbre-mw-nohostname
+  [data-map]
+  (assoc data-map :hostname_ ""))
+
 
 (def ^:dynamic *default-log-file* (str "/tmp/" (make-timestamped-file "commando")))
 
@@ -53,3 +67,11 @@
 
 (timbre/set-config! print-appender)
 (timbre/merge-config! file-appender)
+
+(defn merge-timbre-mw
+  "Installs middlewares (mw) into timbre's config"
+  [mw]
+  (timbre/merge-config!
+    {:middleware mw}))
+
+(merge-timbre-mw [timbre-mw timbre-mw-nohostname])

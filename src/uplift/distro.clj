@@ -66,7 +66,7 @@
     :minor minor release (as integer)}"
   [host]
   (try
-    (let [info (-> (launch "lsb_release -a" :host host :throws true) :output)
+    (let [info (-> (launch "lsb_release -a" :host host :throws true :show-out? false) :output)
           pattern "^%s:\\s*(.*)$"
           variant-patt #"\w+(Server|Client|Workstation)\w*"
           ;; Create parsers to match NAME, VERSION_ID and VARIANT_ID
@@ -138,7 +138,15 @@
                     "systemctl start ntpd.service"
                     "systemctl enable ntpd.service"]]
           (list (for [cmd cmds]
-                  (launch+ cmd))))))))
+                  (launch+ cmd)))))))
+
+  (protos/start-vncserver [this]
+    (let [host (:host this)
+          launch+ #(launch % :host host)]
+      (for [cmd ["systemctl daemon-reload"
+                 "systemctl enable vncserver@:2.service"
+                 "vncpasswd << EOF\npassword\npassword\nEOF"]]
+        (launch+ cmd)))))
 
 (defn rhel-factory
   [distro-info host]

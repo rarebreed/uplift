@@ -128,6 +128,16 @@
     (check-n-send root-path "/root/.config")))
 
 
+(defn configure-vncserver
+  "Pulls down vncserver file"
+  ([cfg-file-path]
+   (let [config (slurp cfg-file-path)
+         dest "/etc/systemd/system/vncserver@:2.service"]
+     (spit dest config)))
+  ([]
+    (configure-vncserver (:vncserver-path config))))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
@@ -187,7 +197,7 @@
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
-                           (let [lein-check (launch "lein version" :host host)]
+                           (let [lein-check (launch "lein version" :host host :env "LEIN_ROOT=1")]
                              (if (-> lein-check :status (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))
