@@ -245,6 +245,7 @@
       (common-setup host)
       (final-vnc-start-7 host))))
 
+
 (defn rhel-factory
   [distro-info host]
   (let [{:keys [major]} distro-info]

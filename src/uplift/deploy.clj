@@ -129,6 +129,16 @@
     (check-n-send root-path "/root/.config")))
 
 
+(defn configure-vncserver
+  "Pulls down vncserver file"
+  ([cfg-file-path]
+   (let [config (slurp cfg-file-path)
+         dest "/etc/systemd/system/vncserver@:2.service"]
+     (spit dest config)))
+  ([]
+    (configure-vncserver (:vncserver-path config))))
+
+
 (defn bootstrap
   "Sets up a new VM with the minimum to kick everything else off
 
