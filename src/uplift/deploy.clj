@@ -209,7 +209,7 @@
         _ (ur/setup-auto-server-deps rhel-type)
 
         ;; configure vncserver settings
-        _ (ud/configure-vncserver)
+        _ (ud/configure-vncserver host)
 
         ;; Start the vncserver
         _ (uprotos/start-vncserver rhel-type)

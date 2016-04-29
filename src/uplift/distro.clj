@@ -109,7 +109,7 @@
      (spit tmp config)
      (file-sys/send-file-to host tmp :dest dest)))
   ([host]
-   (configure-vncserver host (-> (ucr/get-configuration) :vncserver-path))))
+   (configure-vncserver host (-> (ucr/get-configuration) :config :vncserver-path))))
 
 (defn vncpasswd
   [host]
@@ -138,7 +138,7 @@
         script "/start-ldtpd.sh"
         exists? #(file-sys/file-exists? % :host host)]
     (when-not (exists? root)
-      (launch (format "mkdir -p %s" root)))
+      (launch (format "mkdir -p %s" root) :host host))
     (when-not (exists? (str root script))
       (let [ldtpd (-> (ucr/get-configuration) :config :start-ldtpd)]
         (spit (str root script) (slurp ldtpd))))))
