@@ -21,10 +21,13 @@
                  [cheshire "5.5.0"]
                  [commando "0.1.2-SNAPSHOT"]
                  [clj-time "0.11.0"]
-                 [org.testng/testng "6.9.10"]]
+                 [org.testng/testng "6.9.10"]
+                 [dbus-java/libdbus-java "2.8"]
+                 [dbus-java-deps/unix "0.5"]]
 
   :repositories [["jcenter" "http://jcenter.bintray.com"]]
 
+  :jvm-opts ["-Djava.library.path=/usr/local/lib/jni"]
   :java-source-paths ["src"]
   ;:aot :all
   )

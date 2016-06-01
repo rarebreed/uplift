@@ -299,7 +299,10 @@
                          :enabled  "1"
                          :gpgcheck "0"} map->YumRepo)]
         (write-to-config dogtail "dogtail.repo")
-        (file-sys/send-file-to host "dogtail.repo" :dest "/etc/yum.repos.d/dogtail.repo")))))
+        (file-sys/send-file-to host "dogtail.repo" :dest "/etc/yum.repos.d/dogtail.repo")
+        (doseq [f ["dogtail.repo" "epel.repo"]]
+          (when (file-sys/file-exists? f)
+            (file-sys/delete-file f)))))))
 
 
 (defmethod enable-repos ["Server" 6]

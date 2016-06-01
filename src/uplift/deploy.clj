@@ -180,7 +180,7 @@
         ;; Set aliases and install dependencies
         ; _ (launch "pip install python-pillow")
         deps ["subscription-manager-migration*" "expect" "python-pip" "python-devel" "dogtail" "git"
-              "translate-toolkit"]
+              "translate-toolkit" "net-tools"]
         _ (uc/install-deps deps :host host)
         _ (launch "pip install coverage" :host host)
         _ (set-aliases host)
@@ -199,7 +199,7 @@
         ;; Install leiningen and verify
         lein-install-res (do
                            (uc/install-lein host "/usr/local/bin/lein")
-                           (let [lein-check (launch "lein version" :host host :env "LEIN_ROOT=1")]
+                           (let [lein-check (launch "lein version" :host host :env {"LEIN_ROOT" "1"})]
                              (if (-> lein-check :status (= 0))
                                true
                                (throw (RuntimeException. "Unable to install leiningen")))))

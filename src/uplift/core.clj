@@ -187,6 +187,9 @@
                   (edit)
                   (launch "lein" :host host :env {"LEIN_ROOT" "1"}))
         final {:results results :exceptions? (some #(instance? Exception %) results)}]
+    (doseq [f ["/tmp/.bashrc" "~/.bashrc"]]
+      (when (file-sys/file-exists? f)
+        (file-sys/delete-file f)))
     final))
 
 
@@ -236,7 +239,7 @@
   (let [ddns-file (file-sys/get-remote-file host hostfile)
         contents (slurp ddns-file)
         search-patt (re-pattern uuid)
-        newline (clojure.string/join " " [testname "usersys.redhat.com" uuid])]
+        newline (str (clojure.string/join " " [testname "usersys.redhat.com" uuid]) "\n")]
     (when-not (re-seq search-patt contents)
       (spit ddns-file newline :append true)
       (file-sys/send-file-to host ddns-file :dest hostfile))))

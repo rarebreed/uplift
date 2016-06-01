@@ -38,6 +38,8 @@
   [host]
   (spit "yum_base.py" (clojure.string/join "\n" yum-script))
   (file-sys/send-file-to host "yum_base.py")
+  (when (file-sys/file-exists? "yum_base.py")
+    (file-sys/delete-file "yum_base.py"))
   (let [result (launch "python yum_base.py" :host host)
         output (second (clojure.string/split (:output result) #"\n"))
         yum (ches/parse-string output true)]
@@ -105,9 +107,11 @@
   ([host cfg-file-path]
    (let [config (slurp cfg-file-path)
          tmp "/tmp/vncserver@:2.service"
-         dest "/etc/systemd/system/vncserver@:2.service"]
+         dest "/etc/systemd/system/"]
      (spit tmp config)
-     (file-sys/send-file-to host tmp :dest dest)))
+     (when-not (and (not (file-sys/file-exists? (str dest "vncserver@:2.service") :host host)))
+                    (file-sys/file-exists? dest :host host)
+       (file-sys/send-file-to host tmp :dest dest))))
   ([host]
    (configure-vncserver host (-> (ucr/get-configuration) :config :vncserver-path))))
 
@@ -140,8 +144,12 @@
     (when-not (exists? root)
       (launch (format "mkdir -p %s" root) :host host))
     (when-not (exists? (str root script))
-      (let [ldtpd (-> (ucr/get-configuration) :config :start-ldtpd)]
-        (spit (str root script) (slurp ldtpd))))))
+      (let [ldtpd (-> (ucr/get-configuration) :config :start-ldtpd)
+            dest (str root script)
+            tmp (str "/tmp" script)]
+        (spit tmp (slurp ldtpd))
+        (file-sys/send-file-to host tmp :dest dest)
+        (launch (format "chmod +x %s" dest) :host host)))))
 
 
 (defn gnome-terminal-desktop
@@ -150,10 +158,23 @@
         f "/gnome-terminal.desktop"
         e? #(file-sys/file-exists? % :host host)]
     (when-not (e? path)
-      (launch (format "mkdir -p %s" path)))
+      (launch (format "mkdir -p %s" path) :host host))
     (when-not (e? (str path f))
-      (let [desktop (-> (ucr/get-configuration) :config :gnome-desktop)]
-        (spit (str path f) (slurp desktop))))))
+      (let [desktop (-> (ucr/get-configuration) :config :gnome-desktop)
+            tmp (str "/tmp" f)
+            dest (str path f)]
+        (spit tmp (slurp desktop))
+        (file-sys/send-file-to host tmp :dest dest)))))
+
+(defn gconftool-2
+  [host]
+  (let [cmd "gconftool-2 -s /apps/%s --type=%s %s"
+        opts [["gnome-session/options/show_root_warning" "boolean" "false"]
+              ["gnome-screensaver/idle_activation_enabled" "boolean" "false"]
+              ["gnome-power-manager/ac_sleep_display" "int" "0"]]]
+    (doseq [opt opts]
+      (let [full-cmd (apply format cmd opt)]
+        (launch full-cmd :host host)))))
 
 (defn final-vnc-start-7
   [host]
@@ -161,7 +182,8 @@
     (call "killall -9 Xvnc")
     (call "rm -f /tmp/.X2-lock")
     (call "rm -f /tmp/.X11-unix/X2")
-    (call "gsettings set org.gnome.desktop.session session-name gnome-classic")))
+    (call "gsettings set org.gnome.desktop.session session-name gnome-classic")
+    (call "systemctl start vncserver@:2.service")))
 
 
 (defn final-vnc-start-6
@@ -187,7 +209,7 @@
 
 (defn common-setup
   [host]
-  (vec (for [fnc [vncpasswd xstartup autostart start-ldtpd gnome-terminal-desktop]]
+  (vec (for [fnc [vncpasswd xstartup autostart start-ldtpd gnome-terminal-desktop gconftool-2]]
          (fnc host))))
 
 (defrecord RHEL6
@@ -203,8 +225,8 @@
     (let [launch+ #(launch % :host host)
           cmds ["service ntpd stop"
                 "ntpdate clock.redhat.com"
-                "systemctl start ntpd.service"
-                "systemctl enable ntpd.service"]]
+                "service ntpd start"
+                "chkconfig ntpd enable"]]
       (list (for [cmd cmds]
               (launch+ cmd)))))
 
@@ -251,4 +273,4 @@
   (let [{:keys [major]} distro-info]
     (cond
       (= 7 major) (RHEL7. distro-info host)
-      (= 7 major) (RHEL6. distro-info host))))
+      (= 6 major) (RHEL6. distro-info host))))
