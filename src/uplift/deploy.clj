@@ -1,30 +1,3 @@
-;; Deployment should be a decentralized process
-;; A DeploymentServer will be the focal point for users to request a machine to be provisioned
-;; A user will log into the DeploymentServer and then provide the requested version of RHEL to install
-;; The DS will provision a new VM and provide the IP address for the new machine.  Once the IP address
-;; of the VM is known, the uplift agent will be installed to it.  This includes installing a JVM on the
-;; new VM.  Once this is done, the DS can talk to the uplift agent.  The uplift agent will do any
-;; further provisioning of the system it is installed to.
-;;
-;; DeploymentServer tasks
-;; 1. Provision a new VM
-;; 2. Provide IP address of the new VM
-;; 3. Install a JVM and leiningen on the VM
-;; 4. Create a local repo file for the remote machine
-;; 5. Install uplift to the VM
-;;
-;; Uplift agent tasks
-;; 1. Install the ddnsclient for remote
-;; 2. Get distro information
-;; 3.
-;; 4. Setup system time
-;; 5. Install needed dependencies
-;; 6. Setup hostname and ddns name
-;; 7. Poll until hostname resolves
-;; 8. Copy the id_auto keys from central to machine
-;; 9. Copy the candlepin-ca.crt to machine
-
-
 (ns uplift.deploy
   (:require [clj-webdriver.taxi :as cwt]
             [taoensso.timbre :as timbre]
@@ -180,7 +153,7 @@
         ;; Set aliases and install dependencies
         ; _ (launch "pip install python-pillow")
         deps ["subscription-manager-migration*" "expect" "python-pip" "python-devel" "dogtail" "git"
-              "translate-toolkit" "net-tools"]
+              "translate-toolkit" "net-tools" "ntp"]
         _ (uc/install-deps deps :host host)
         _ (launch "pip install coverage" :host host)
         _ (set-aliases host)
@@ -215,9 +188,9 @@
         _ (uprotos/start-vncserver rhel-type)
 
         ;; FIXME: we need to install uplift and pheidippides
-        uplift-res (install-uplift host)
+        ;uplift-res (install-uplift host)
         final-res {:copy-key-res     copy-key-res :respo-install-res repo-install-res :install-jdk-res install-jdk-res
-                   :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res :uplift-res uplift-res
+                   :copy-autokey-res copy-autokey-res :lein-install-res lein-install-res
                    :system-res       system-res}]
     (timbre/info "=========== Setup is complete!! ==================")
     (timbre/info final-res)))

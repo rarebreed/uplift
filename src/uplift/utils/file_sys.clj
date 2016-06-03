@@ -150,10 +150,11 @@
 
 
 (defn file-exists?
-  [^String fpath & {:keys [host]}]
+  [^String fpath & {:keys [host show-out?]
+                    :or {show-out? false}}]
   (if host
     (let [cmd (format "ls -al %s" fpath)
-          result (uc/launch cmd :host host)]
+          result (uc/launch cmd :host host :show-out? show-out?)]
       (if (= 0 (:status result)) true false))
     (.exists (File. fpath))))
 

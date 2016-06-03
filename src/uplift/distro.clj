@@ -109,8 +109,7 @@
          tmp "/tmp/vncserver@:2.service"
          dest "/etc/systemd/system/"]
      (spit tmp config)
-     (when-not (and (not (file-sys/file-exists? (str dest "vncserver@:2.service") :host host)))
-                    (file-sys/file-exists? dest :host host)
+     (when-not (file-sys/file-exists? (str dest "vncserver@:2.service") :host host)
        (file-sys/send-file-to host tmp :dest dest))))
   ([host]
    (configure-vncserver host (-> (ucr/get-configuration) :config :vncserver-path))))
@@ -182,7 +181,8 @@
     (call "killall -9 Xvnc")
     (call "rm -f /tmp/.X2-lock")
     (call "rm -f /tmp/.X11-unix/X2")
-    (call "gsettings set org.gnome.desktop.session session-name gnome-classic")
+    (when (not= "gnome-classic" (:output (call "gsettings get org.gnome.desktop.session session-name")))
+      (call "gsettings set org.gnome.desktop.session session-name gnome-classic"))
     (call "systemctl start vncserver@:2.service")))
 
 
